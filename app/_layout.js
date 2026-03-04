@@ -10,6 +10,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="canvas" />
         <Stack.Screen name="login" />
       </Stack>
     </AuthProvider>

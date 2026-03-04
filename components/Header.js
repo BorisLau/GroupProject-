@@ -2,7 +2,12 @@ import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { colors, typography, spacing } from "../styles/theme";
 
-export default function Header({ onMenuPress, showSignOut = false, onSignOut }) {
+export default function Header({
+  onMenuPress,
+  onCanvasPress,
+  showSignOut = false,
+  onSignOut,
+}) {
   return (
     <View style={styles.header}>
       <Text style={styles.headerTitle}>Smart Map</Text>
@@ -15,11 +20,19 @@ export default function Header({ onMenuPress, showSignOut = false, onSignOut }) 
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity style={styles.menuButton} onPress={onMenuPress}>
-          <View style={styles.menuLine} />
-          <View style={styles.menuLine} />
-          <View style={styles.menuLine} />
-        </TouchableOpacity>
+        <View style={styles.quickActions}>
+          <TouchableOpacity style={styles.menuButton} onPress={onMenuPress}>
+            <View style={styles.menuLine} />
+            <View style={styles.menuLine} />
+            <View style={styles.menuLine} />
+          </TouchableOpacity>
+
+          {onCanvasPress && (
+            <TouchableOpacity style={styles.canvasButton} onPress={onCanvasPress}>
+              <Text style={styles.canvasButtonText}>Canvas</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -41,6 +54,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md,
+  },
+  quickActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
   },
   signOutButton: {
     paddingVertical: spacing.xs,
@@ -64,5 +82,16 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 2,
     backgroundColor: colors.textSecondary,
+  },
+  canvasButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  canvasButtonText: {
+    fontSize: 13,
+    color: colors.textOnPrimary,
+    fontWeight: "600",
   },
 });

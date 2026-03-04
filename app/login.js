@@ -81,7 +81,7 @@ export default function LoginScreen() {
 
     try {
       if (isSignUp) {
-        const { data, error } = await signUp(email, password);
+        const { error } = await signUp(email, password);
         if (error) {
           setError(error.message);
         } else {
@@ -92,7 +92,7 @@ export default function LoginScreen() {
           alert("Account created! Please check your email to verify.");
         }
       } else {
-        const { data, error } = await signIn(email, password);
+        const { error } = await signIn(email, password);
         if (error) {
           setError(error.message);
         } else {
@@ -100,7 +100,7 @@ export default function LoginScreen() {
           router.replace("/");
         }
       }
-    } catch (err) {
+    } catch (_err) {
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);

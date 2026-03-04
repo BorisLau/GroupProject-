@@ -80,9 +80,6 @@ export default function Index() {
     addMessage(inputText, attachedFileName);
     setInputText("");
     setAttachedFileName("");
-
-    // Navigate to mind map editor
-    router.push("/mindmap");
   };
 
   const handleAttachFile = async () => {
@@ -139,6 +136,10 @@ export default function Index() {
     }
   };
 
+  const handleOpenCanvas = () => {
+    router.push("/canvas");
+  };
+
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <KeyboardAvoidingView
@@ -149,6 +150,7 @@ export default function Index() {
         <View style={styles.root}>
           <Header
             onMenuPress={toggleSidebar}
+            onCanvasPress={handleOpenCanvas}
             showSignOut={true}
             onSignOut={handleSignOut}
           />
