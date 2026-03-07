@@ -1,0 +1,21 @@
+- generic [ref=e2]:
+  - generic [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]: Smart Map
+      - generic [ref=e15]: Sign in to your account
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: Email
+        - textbox "Enter your email" [ref=e19]
+      - generic [ref=e20]:
+        - generic [ref=e21]: Password
+        - textbox "Enter your password" [ref=e22]
+      - generic [ref=e24] [cursor=pointer]: Sign In
+      - generic [ref=e27]: or continue with
+      - generic [ref=e30] [cursor=pointer]: Continue with Google
+      - generic [ref=e32] [cursor=pointer]: Continue with GitHub
+      - generic [ref=e33]:
+        - generic [ref=e34]: Don't have an account?
+        - generic [ref=e36] [cursor=pointer]: Sign Up
+  - generic:
+    - img

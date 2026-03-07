@@ -29,7 +29,7 @@ export default function Composer({
           keyboardShouldPersistTaps="handled"
         >
             <TextInput
-              placeholder="輸入要在畫布上建立的 workflow 內容..."
+              placeholder="輸入要在畫布上建立的 mindmap 內容..."
             placeholderTextColor={colors.textLight}
             value={inputText}
             onChangeText={onChangeText}

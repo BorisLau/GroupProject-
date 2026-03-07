@@ -1,6 +1,12 @@
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { colors, typography, spacing } from "../styles/theme";
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { moderateScale, scale as scaleSize, verticalScale } from "react-native-size-matters";
+import { borderRadius, colors, typography, spacing } from "../styles/theme";
+
+const IS_NATIVE_MOBILE = Platform.OS === "ios" || Platform.OS === "android";
+const hs = (value) => (IS_NATIVE_MOBILE ? scaleSize(value) : value);
+const vs = (value) => (IS_NATIVE_MOBILE ? verticalScale(value) : value);
+const ms = (value) => (IS_NATIVE_MOBILE ? moderateScale(value) : value);
 
 export default function Header({
   onMenuPress,
@@ -40,8 +46,8 @@ export default function Header({
 
 const styles = StyleSheet.create({
   header: {
-    height: 60,
-    paddingHorizontal: spacing.lg,
+    height: vs(60),
+    paddingHorizontal: hs(spacing.lg),
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -49,48 +55,49 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     ...typography.headerTitle,
+    fontSize: ms(typography.headerTitle.fontSize),
   },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
+    gap: ms(spacing.md),
   },
   quickActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: ms(spacing.sm),
   },
   signOutButton: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.md,
-    borderRadius: 8,
+    paddingVertical: vs(spacing.xs),
+    paddingHorizontal: hs(spacing.md),
+    borderRadius: ms(borderRadius.sm),
     backgroundColor: colors.disabled,
   },
   signOutText: {
-    fontSize: 14,
+    fontSize: ms(14),
     color: colors.textSecondary,
     fontWeight: "500",
   },
   menuButton: {
-    width: 28,
-    height: 24,
+    width: hs(28),
+    height: vs(24),
     justifyContent: "space-between",
     alignItems: "center",
   },
   menuLine: {
     width: "100%",
-    height: 3,
-    borderRadius: 2,
+    height: vs(3),
+    borderRadius: ms(2),
     backgroundColor: colors.textSecondary,
   },
   canvasButton: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.md,
-    borderRadius: 8,
+    paddingVertical: vs(spacing.xs),
+    paddingHorizontal: hs(spacing.md),
+    borderRadius: ms(borderRadius.sm),
     backgroundColor: colors.primary,
   },
   canvasButtonText: {
-    fontSize: 13,
+    fontSize: ms(13),
     color: colors.textOnPrimary,
     fontWeight: "600",
   },

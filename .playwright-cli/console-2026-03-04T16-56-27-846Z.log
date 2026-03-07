@@ -1,0 +1,1 @@
+[     774ms] [WARNING] "shadow*" style props are deprecated. Use "boxShadow". @ http://localhost:8082/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&lazy=true&transform.routerRoot=app&transform.reactCompiler=true:7236

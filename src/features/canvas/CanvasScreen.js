@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -9,31 +10,41 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
-import Svg, { Circle, Defs, Line, LinearGradient, Rect, Stop } from "react-native-svg";
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Svg, { Circle, Defs, Pattern, Rect } from "react-native-svg";
 import { useAuth } from "../../../contexts/AuthContext";
 import { borderRadius, colors, spacing, typography } from "../../../styles/theme";
 
-const MIN_SCALE = 0.2;
-const MAX_SCALE = 5;
-const GRID_WORLD_SIZE = 4096;
-const HALF_GRID_WORLD_SIZE = GRID_WORLD_SIZE / 2;
-const GUIDE_AXIS_COLOR = "#8798b6";
-const GUIDE_MARKER_DISTANCE = 320;
-const GUIDE_MARKER_RADIUS = 28;
+const MIN_SCALE = 0.6;
+const MAX_SCALE = 6;
+const DOT_STEP = 24;
+const DOT_RADIUS = 1.6;
+const WHEEL_ZOOM_SENSITIVITY = 0.0018;
+const GRID_OVERSCAN = 6;
 
-const MAX_PAN_OFFSET = GRID_WORLD_SIZE * 0.6;
-const INITIAL_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+const clamp = (value, min, max) => {
+  "worklet";
+  return Math.min(max, Math.max(min, value));
+};
+
+const modulo = (value, divisor) => {
+  "worklet";
+  return ((value % divisor) + divisor) % divisor;
+};
 
 export default function CanvasScreen() {
   const router = useRouter();
   const { session, loading: authLoading } = useAuth();
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const hasInitializedViewport = useRef(false);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+
+  const scale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const startScale = useSharedValue(1);
+  const startTranslateX = useSharedValue(0);
+  const startTranslateY = useSharedValue(0);
+  const pinchWorldX = useSharedValue(0);
+  const pinchWorldY = useSharedValue(0);
 
   useEffect(() => {
     if (!authLoading && !session) {
@@ -41,141 +52,97 @@ export default function CanvasScreen() {
     }
   }, [authLoading, router, session]);
 
-  const scale = useSharedValue(INITIAL_VIEWPORT.zoom);
-  const offsetX = useSharedValue(INITIAL_VIEWPORT.x);
-  const offsetY = useSharedValue(INITIAL_VIEWPORT.y);
-  const startScale = useSharedValue(INITIAL_VIEWPORT.zoom);
-  const startOffsetX = useSharedValue(INITIAL_VIEWPORT.x);
-  const startOffsetY = useSharedValue(INITIAL_VIEWPORT.y);
-
-  const getInitialOffsets = useCallback(() => {
-    return {
-      x: viewportSize.width > 0 ? viewportSize.width / 2 : 0,
-      y: viewportSize.height > 0 ? viewportSize.height / 2 : 0,
-    };
-  }, [viewportSize.height, viewportSize.width]);
-
-  useEffect(() => {
-    if (!viewportSize.width || !viewportSize.height || hasInitializedViewport.current) {
-      return;
-    }
-
-    const nextOffsets = getInitialOffsets();
-    offsetX.value = nextOffsets.x;
-    offsetY.value = nextOffsets.y;
-    startOffsetX.value = nextOffsets.x;
-    startOffsetY.value = nextOffsets.y;
-    hasInitializedViewport.current = true;
-  }, [
-    getInitialOffsets,
-    offsetX,
-    offsetY,
-    startOffsetX,
-    startOffsetY,
-    viewportSize.height,
-    viewportSize.width,
-  ]);
-
   const panGesture = Gesture.Pan()
+    .averageTouches(true)
     .maxPointers(1)
     .onStart(() => {
-      startOffsetX.value = offsetX.value;
-      startOffsetY.value = offsetY.value;
+      startTranslateX.value = translateX.value;
+      startTranslateY.value = translateY.value;
     })
     .onUpdate((event) => {
-      if (!Number.isFinite(event.translationX) || !Number.isFinite(event.translationY)) {
-        return;
-      }
-
-      const nextOffsetX = startOffsetX.value + event.translationX;
-      const nextOffsetY = startOffsetY.value + event.translationY;
-
-      if (!Number.isFinite(nextOffsetX) || !Number.isFinite(nextOffsetY)) {
-        return;
-      }
-
-      offsetX.value = Math.max(-MAX_PAN_OFFSET, Math.min(MAX_PAN_OFFSET, nextOffsetX));
-      offsetY.value = Math.max(-MAX_PAN_OFFSET, Math.min(MAX_PAN_OFFSET, nextOffsetY));
+      translateX.value = startTranslateX.value + event.translationX;
+      translateY.value = startTranslateY.value + event.translationY;
     });
 
   const pinchGesture = Gesture.Pinch()
-    .onStart(() => {
+    .onStart((event) => {
       startScale.value = scale.value;
-      startOffsetX.value = offsetX.value;
-      startOffsetY.value = offsetY.value;
+      startTranslateX.value = translateX.value;
+      startTranslateY.value = translateY.value;
+
+      pinchWorldX.value = (event.focalX - startTranslateX.value) / startScale.value;
+      pinchWorldY.value = (event.focalY - startTranslateY.value) / startScale.value;
     })
     .onUpdate((event) => {
-      if (
-        !Number.isFinite(event.scale) ||
-        !Number.isFinite(event.focalX) ||
-        !Number.isFinite(event.focalY)
-      ) {
+      if (!Number.isFinite(event.scale)) {
         return;
       }
 
-      const anchorX = event.focalX;
-      const anchorY = event.focalY;
-
-      const safeStartScale =
-        Number.isFinite(startScale.value) && startScale.value > 0
-          ? startScale.value
-          : 1;
-      const rawScale = safeStartScale * event.scale;
-
-      if (!Number.isFinite(rawScale)) {
-        return;
-      }
-
-      const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, rawScale));
-      const deltaScale = nextScale / safeStartScale;
-
-      if (!Number.isFinite(deltaScale)) {
-        return;
-      }
-
-      const nextOffsetX =
-        anchorX - (anchorX - startOffsetX.value) * deltaScale;
-      const nextOffsetY =
-        anchorY - (anchorY - startOffsetY.value) * deltaScale;
-
-      if (!Number.isFinite(nextOffsetX) || !Number.isFinite(nextOffsetY)) {
-        return;
-      }
-
-      offsetX.value = Math.max(-MAX_PAN_OFFSET, Math.min(MAX_PAN_OFFSET, nextOffsetX));
-      offsetY.value = Math.max(-MAX_PAN_OFFSET, Math.min(MAX_PAN_OFFSET, nextOffsetY));
+      const nextScale = clamp(startScale.value * event.scale, MIN_SCALE, MAX_SCALE);
+      translateX.value = event.focalX - pinchWorldX.value * nextScale;
+      translateY.value = event.focalY - pinchWorldY.value * nextScale;
       scale.value = nextScale;
-    })
-    .onEnd(() => {
-      if (!Number.isFinite(scale.value)) {
-        scale.value = 1;
-      }
-      if (!Number.isFinite(offsetX.value)) {
-        offsetX.value = 0;
-      }
-      if (!Number.isFinite(offsetY.value)) {
-        offsetY.value = 0;
-      }
     });
 
   const composedGesture = Gesture.Simultaneous(panGesture, pinchGesture);
 
-  const worldStyle = useAnimatedStyle(() => {
+  const gridAnimatedStyle = useAnimatedStyle(() => {
+    const scaledStep = DOT_STEP * scale.value;
+    const safeStep = Math.max(4, scaledStep);
+    const offsetX = modulo(translateX.value, safeStep) - safeStep;
+    const offsetY = modulo(translateY.value, safeStep) - safeStep;
+
     return {
-      transform: [
-        { translateX: offsetX.value },
-        { translateY: offsetY.value },
-        { scale: scale.value },
-      ],
+      transform: [{ translateX: offsetX }, { translateY: offsetY }, { scale: scale.value }],
     };
   });
 
-  const handleResetView = useCallback(() => {
-    const nextOffsets = getInitialOffsets();
-    scale.value = withTiming(INITIAL_VIEWPORT.zoom, { duration: 180 });
-    offsetX.value = withTiming(nextOffsets.x, { duration: 180 });
-    offsetY.value = withTiming(nextOffsets.y, { duration: 180 });
-  }, [getInitialOffsets, offsetX, offsetY, scale]);
+  const handleReset = useCallback(() => {
+    scale.value = withTiming(1, { duration: 180 });
+    translateX.value = withTiming(0, { duration: 180 });
+    translateY.value = withTiming(0, { duration: 180 });
+  }, [scale, translateX, translateY]);
+
+  const handleWheel = useCallback(
+    (event) => {
+      if (Platform.OS !== "web") {
+        return;
+      }
+
+      const native = event?.nativeEvent;
+      if (!native) {
+        return;
+      }
+
+      if (typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+
+      const hasZoomModifier = !!native.ctrlKey || !!native.metaKey;
+
+      if (!hasZoomModifier) {
+        translateX.value -= native.deltaX;
+        translateY.value -= native.deltaY;
+        return;
+      }
+
+      const currentScale = scale.value;
+      const nextScale = clamp(
+        currentScale * Math.exp(-native.deltaY * WHEEL_ZOOM_SENSITIVITY),
+        MIN_SCALE,
+        MAX_SCALE
+      );
+      const focalX = Number.isFinite(native.locationX) ? native.locationX : viewport.width / 2;
+      const focalY = Number.isFinite(native.locationY) ? native.locationY : viewport.height / 2;
+      const worldX = (focalX - translateX.value) / currentScale;
+      const worldY = (focalY - translateY.value) / currentScale;
+
+      translateX.value = focalX - worldX * nextScale;
+      translateY.value = focalY - worldY * nextScale;
+      scale.value = nextScale;
+    },
+    [scale, translateX, translateY, viewport.height, viewport.width]
+  );
 
   if (authLoading) {
     return (
@@ -189,117 +156,83 @@ export default function CanvasScreen() {
     return null;
   }
 
+  const renderWidth = viewport.width > 0 ? (viewport.width / MIN_SCALE)*GRID_OVERSCAN : 0;
+  const renderHeight = viewport.height > 0 ? (viewport.height / MIN_SCALE)*GRID_OVERSCAN : 0;
+  const renderLeft = (viewport.width - renderWidth) / 2;
+  const renderTop = (viewport.height - renderHeight) / 2;
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace("/")}>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => router.replace("/")}
+          >
             <Text style={styles.secondaryButtonText}>Back</Text>
           </TouchableOpacity>
 
-          <Text style={styles.title}>Workflow Canvas</Text>
+          <Text style={styles.title}>Canvas</Text>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={handleResetView}>
-            <Text style={styles.primaryButtonText}>Reset View</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={handleReset}>
+            <Text style={styles.primaryButtonText}>Reset</Text>
           </TouchableOpacity>
         </View>
 
         <View
           style={styles.canvasContainer}
+          {...(Platform.OS === "web" ? { onWheel: handleWheel } : null)}
           onLayout={(event) => {
             const { width, height } = event.nativeEvent.layout;
-            setViewportSize({ width, height });
+            setViewport({ width, height });
           }}
         >
           <GestureDetector gesture={composedGesture}>
             <View style={StyleSheet.absoluteFill}>
-              <Animated.View style={[styles.worldLayer, worldStyle]}>
-                <View style={styles.gridOrigin}>
-                  <Svg width={GRID_WORLD_SIZE} height={GRID_WORLD_SIZE}>
+              {viewport.width > 0 && viewport.height > 0 ? (
+                <Animated.View
+                  style={[
+                    styles.gridLayer,
+                    {
+                      width: renderWidth,
+                      height: renderHeight,
+                      left: renderLeft,
+                      top: renderTop,
+                    },
+                    gridAnimatedStyle,
+                  ]}
+                >
+                  <Svg width={renderWidth} height={renderHeight} style={StyleSheet.absoluteFill}>
                     <Defs>
-                      <LinearGradient id="canvasGuideBg" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#f7faff" stopOpacity="1" />
-                        <Stop offset="1" stopColor="#e6eefb" stopOpacity="1" />
-                      </LinearGradient>
+                      <Pattern
+                        id="dotGridPattern"
+                        x={0}
+                        y={0}
+                        width={DOT_STEP}
+                        height={DOT_STEP}
+                        patternUnits="userSpaceOnUse"
+                      >
+                        <Circle
+                          cx={DOT_STEP / 2}
+                          cy={DOT_STEP / 2}
+                          r={DOT_RADIUS}
+                          fill="#cbd4e1"
+                        />
+                      </Pattern>
                     </Defs>
+                    <Rect x={0} y={0} width={renderWidth} height={renderHeight} fill="#f8fafd" />
                     <Rect
                       x={0}
                       y={0}
-                      width={GRID_WORLD_SIZE}
-                      height={GRID_WORLD_SIZE}
-                      fill="url(#canvasGuideBg)"
-                    />
-                    <Rect
-                      x={HALF_GRID_WORLD_SIZE - 520}
-                      y={HALF_GRID_WORLD_SIZE - 520}
-                      width={1040}
-                      height={1040}
-                      fill="#edf4ff"
-                      stroke="#9eb2d0"
-                      strokeWidth={8}
-                    />
-                    <Line
-                      x1={0}
-                      y1={HALF_GRID_WORLD_SIZE}
-                      x2={GRID_WORLD_SIZE}
-                      y2={HALF_GRID_WORLD_SIZE}
-                      stroke={GUIDE_AXIS_COLOR}
-                      strokeWidth={6}
-                      strokeOpacity={0.72}
-                    />
-                    <Line
-                      x1={HALF_GRID_WORLD_SIZE}
-                      y1={0}
-                      x2={HALF_GRID_WORLD_SIZE}
-                      y2={GRID_WORLD_SIZE}
-                      stroke={GUIDE_AXIS_COLOR}
-                      strokeWidth={6}
-                      strokeOpacity={0.72}
-                    />
-                    <Circle
-                      cx={HALF_GRID_WORLD_SIZE}
-                      cy={HALF_GRID_WORLD_SIZE}
-                      r={52}
-                      fill="#6e84a8"
-                      fillOpacity={0.9}
-                    />
-                    <Circle
-                      cx={HALF_GRID_WORLD_SIZE - GUIDE_MARKER_DISTANCE}
-                      cy={HALF_GRID_WORLD_SIZE}
-                      r={GUIDE_MARKER_RADIUS}
-                      fill="#90a5c5"
-                    />
-                    <Circle
-                      cx={HALF_GRID_WORLD_SIZE + GUIDE_MARKER_DISTANCE}
-                      cy={HALF_GRID_WORLD_SIZE}
-                      r={GUIDE_MARKER_RADIUS}
-                      fill="#90a5c5"
-                    />
-                    <Circle
-                      cx={HALF_GRID_WORLD_SIZE}
-                      cy={HALF_GRID_WORLD_SIZE - GUIDE_MARKER_DISTANCE}
-                      r={GUIDE_MARKER_RADIUS}
-                      fill="#90a5c5"
-                    />
-                    <Circle
-                      cx={HALF_GRID_WORLD_SIZE}
-                      cy={HALF_GRID_WORLD_SIZE + GUIDE_MARKER_DISTANCE}
-                      r={GUIDE_MARKER_RADIUS}
-                      fill="#90a5c5"
+                      width={renderWidth}
+                      height={renderHeight}
+                      fill="url(#dotGridPattern)"
                     />
                   </Svg>
-                </View>
-              </Animated.View>
+                </Animated.View>
+              ) : null}
             </View>
           </GestureDetector>
-
-          <View style={styles.hud}>
-            <Text style={styles.hudTitle}>Canvas MVP</Text>
-            <Text style={styles.hudText}>Pan with one finger, pinch with two fingers.</Text>
-            <Text style={styles.hudText}>
-              nodes: 0 | edges: 0
-            </Text>
-          </View>
         </View>
       </SafeAreaView>
     </GestureHandlerRootView>
@@ -355,39 +288,10 @@ const styles = StyleSheet.create({
   },
   canvasContainer: {
     flex: 1,
-    backgroundColor: "#ffffff",
     overflow: "hidden",
+    backgroundColor: "#f8fafd",
   },
-  worldLayer: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  gridOrigin: {
+  gridLayer: {
     position: "absolute",
-    left: -HALF_GRID_WORLD_SIZE,
-    top: -HALF_GRID_WORLD_SIZE,
-    width: GRID_WORLD_SIZE,
-    height: GRID_WORLD_SIZE,
-  },
-  hud: {
-    position: "absolute",
-    left: spacing.lg,
-    right: spacing.lg,
-    bottom: spacing.lg,
-    borderRadius: borderRadius.lg,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  hudTitle: {
-    ...typography.bodySmall,
-    fontWeight: "600",
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
-  },
-  hudText: {
-    ...typography.captionSmall,
-    color: colors.textSecondary,
   },
 });

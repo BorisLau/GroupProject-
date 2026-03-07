@@ -1,16 +1,16 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
   Platform,
   ScrollView,
   ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../contexts/AuthContext";
 import {
   colors,
@@ -22,13 +22,20 @@ import {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { signIn, signUp } = useAuth();
+  const {
+    signIn,
+    signUp,
+    signInWithOAuth,
+    session,
+    loading: authLoading,
+  } = useAuth();
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [oauthLoadingProvider, setOauthLoadingProvider] = useState("");
   const [error, setError] = useState("");
 
   const [emailFocused, setEmailFocused] = useState(false);
@@ -39,6 +46,12 @@ export default function LoginScreen() {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
+
+  useEffect(() => {
+    if (!authLoading && session) {
+      router.replace("/");
+    }
+  }, [authLoading, session, router]);
 
   const validateForm = () => {
     setError("");
@@ -114,14 +127,40 @@ export default function LoginScreen() {
     setConfirmPassword("");
   };
 
+  const handleOAuthSignIn = async (provider) => {
+    if (loading || oauthLoadingProvider) {
+      return;
+    }
+
+    setError("");
+    setOauthLoadingProvider(provider);
+
+    try {
+      const { error } = await signInWithOAuth(provider);
+
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+    } catch (_err) {
+      setError("OAuth sign-in failed. Please try again.");
+    } finally {
+      setOauthLoadingProvider("");
+    }
+  };
+
+  const isBusy = loading || !!oauthLoadingProvider;
+
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        bounces={false}
       >
         <View style={styles.container}>
           {/* Header */}
@@ -155,8 +194,11 @@ export default function LoginScreen() {
                 onFocus={() => setEmailFocused(true)}
                 onBlur={() => setEmailFocused(false)}
                 autoCapitalize="none"
-                autoComplete="email"
-                keyboardType="email-address"
+                autoComplete={Platform.OS === "ios" ? "off" : "email"}
+                textContentType={Platform.OS === "ios" ? "none" : "emailAddress"}
+                keyboardType={Platform.OS === "ios" ? "default" : "email-address"}
+                autoCorrect={false}
+                spellCheck={false}
                 editable={!loading}
               />
             </View>
@@ -181,7 +223,16 @@ export default function LoginScreen() {
                 onBlur={() => setPasswordFocused(false)}
                 secureTextEntry
                 autoCapitalize="none"
-                autoComplete={isSignUp ? "new-password" : "current-password"}
+                autoComplete={
+                  Platform.OS === "ios"
+                    ? "off"
+                    : isSignUp
+                      ? "new-password"
+                      : "current-password"
+                }
+                textContentType={Platform.OS === "ios" ? "none" : undefined}
+                autoCorrect={false}
+                spellCheck={false}
                 editable={!loading}
               />
             </View>
@@ -207,7 +258,10 @@ export default function LoginScreen() {
                   onBlur={() => setConfirmPasswordFocused(false)}
                   secureTextEntry
                   autoCapitalize="none"
-                  autoComplete="new-password"
+                  autoComplete={Platform.OS === "ios" ? "off" : "new-password"}
+                  textContentType={Platform.OS === "ios" ? "none" : undefined}
+                  autoCorrect={false}
+                  spellCheck={false}
                   editable={!loading}
                 />
               </View>
@@ -220,10 +274,10 @@ export default function LoginScreen() {
             <TouchableOpacity
               style={[
                 styles.submitButton,
-                loading && styles.submitButtonDisabled,
+                isBusy && styles.submitButtonDisabled,
               ]}
               onPress={handleSubmit}
-              disabled={loading}
+              disabled={isBusy}
             >
               {loading ? (
                 <ActivityIndicator color={colors.textOnPrimary} />
@@ -233,6 +287,40 @@ export default function LoginScreen() {
                 </Text>
               )}
             </TouchableOpacity>
+
+            {!isSignUp && (
+              <>
+                <View style={styles.dividerContainer}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or continue with</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.oauthButton, isBusy && styles.submitButtonDisabled]}
+                  onPress={() => handleOAuthSignIn("google")}
+                  disabled={isBusy}
+                >
+                  {oauthLoadingProvider === "google" ? (
+                    <ActivityIndicator color={colors.textPrimary} />
+                  ) : (
+                    <Text style={styles.oauthButtonText}>Continue with Google</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.oauthButton, isBusy && styles.submitButtonDisabled]}
+                  onPress={() => handleOAuthSignIn("github")}
+                  disabled={isBusy}
+                >
+                  {oauthLoadingProvider === "github" ? (
+                    <ActivityIndicator color={colors.textPrimary} />
+                  ) : (
+                    <Text style={styles.oauthButtonText}>Continue with GitHub</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
 
             {/* Toggle Sign In/Up */}
             <View style={styles.toggleContainer}>
@@ -250,7 +338,7 @@ export default function LoginScreen() {
           </View>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -261,7 +349,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: "center",
+    justifyContent: "flex-start",
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.xxl,
   },
@@ -328,6 +416,33 @@ const styles = StyleSheet.create({
     ...commonStyles.buttonText,
     ...commonStyles.buttonTextPrimary,
     fontSize: 17,
+  },
+  dividerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.borderLight,
+  },
+  dividerText: {
+    ...typography.caption,
+    color: colors.textTertiary,
+  },
+  oauthButton: {
+    ...commonStyles.button,
+    ...commonStyles.buttonOutline,
+    height: 48,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  oauthButtonText: {
+    ...commonStyles.buttonText,
+    ...commonStyles.buttonTextSecondary,
   },
   toggleContainer: {
     flexDirection: "row",
