@@ -49,6 +49,9 @@ const normalizeRelation = (value) => {
   return "parent";
 };
 
+const toEdgeSignature = (edge) =>
+  `${safeString(edge?.relation || "parent")}::${safeString(edge?.from)}::${safeString(edge?.to)}`;
+
 const createNodeRecord = (rawNode, index, parentId = null) => {
   const id = normalizeId(rawNode?.id, "node", index + 1);
   const label = clipText(
@@ -135,6 +138,107 @@ const dedupeById = (records) => {
   return Array.from(map.values());
 };
 
+export const materializeParentEdges = (nodes = [], edges = []) => {
+  const nextEdges = Array.isArray(edges) ? [...edges] : [];
+  const knownSignatures = new Set(
+    nextEdges
+      .filter((edge) => edge?.from && edge?.to)
+      .map((edge) => toEdgeSignature(edge))
+  );
+
+  (nodes || []).forEach((node) => {
+    const childId = safeString(node?.id);
+    const parentId = safeString(node?.parentId);
+    if (!childId || !parentId || childId === parentId) {
+      return;
+    }
+
+    const candidate = {
+      id: `edge-parent-${parentId}-${childId}`,
+      from: parentId,
+      to: childId,
+      relation: "parent",
+      label: "",
+    };
+    const signature = toEdgeSignature(candidate);
+
+    if (knownSignatures.has(signature)) {
+      return;
+    }
+
+    nextEdges.push(candidate);
+    knownSignatures.add(signature);
+  });
+
+  return nextEdges;
+};
+
+const buildEffectiveParentMap = (nodes = [], edges = []) => {
+  const nodeIds = new Set((nodes || []).map((node) => safeString(node?.id)).filter(Boolean));
+  const parentMap = new Map();
+
+  (nodes || []).forEach((node) => {
+    const nodeId = safeString(node?.id);
+    const parentId = safeString(node?.parentId);
+    if (!nodeId || !parentId || nodeId === parentId || !nodeIds.has(parentId)) {
+      return;
+    }
+    parentMap.set(nodeId, parentId);
+  });
+
+  (edges || []).forEach((edge) => {
+    if (safeString(edge?.relation || "parent") !== "parent") {
+      return;
+    }
+
+    const fromId = safeString(edge?.from);
+    const toId = safeString(edge?.to);
+    if (!fromId || !toId || fromId === toId || parentMap.has(toId)) {
+      return;
+    }
+    if (!nodeIds.has(fromId) || !nodeIds.has(toId)) {
+      return;
+    }
+    parentMap.set(toId, fromId);
+  });
+
+  return parentMap;
+};
+
+const detectParentCycles = (parentMap) => {
+  const errors = [];
+  const visitState = new Map();
+
+  const visit = (nodeId, trail = []) => {
+    const state = visitState.get(nodeId);
+    if (state === "done") {
+      return;
+    }
+
+    const cycleStartIndex = trail.indexOf(nodeId);
+    if (cycleStartIndex !== -1) {
+      const cyclePath = [...trail.slice(cycleStartIndex), nodeId];
+      errors.push(`parent 關係形成循環: ${cyclePath.join(" -> ")}`);
+      return;
+    }
+
+    visitState.set(nodeId, "visiting");
+
+    const parentId = parentMap.get(nodeId);
+    if (parentId) {
+      visit(parentId, [...trail, nodeId]);
+    }
+
+    visitState.set(nodeId, "done");
+  };
+
+  parentMap.forEach((_parentId, childId) => {
+    visit(childId);
+  });
+
+  return errors;
+};
+
 export const normalizeMindmapGraph = (raw) => {
   const graph = raw || {};
   const nodes = [];
@@ -158,7 +262,7 @@ export const normalizeMindmapGraph = (raw) => {
 
   const normalizedNodes = dedupeById(nodes);
   const nodeIds = new Set(normalizedNodes.map((node) => node.id));
-  const normalizedEdges = dedupeById(edges).filter((edge) => {
+  const normalizedEdges = dedupeById(materializeParentEdges(normalizedNodes, edges)).filter((edge) => {
     return edge.from && edge.to && edge.from !== edge.to && nodeIds.has(edge.from) && nodeIds.has(edge.to);
   });
 
@@ -198,6 +302,20 @@ export const validateMindmapGraph = (graph) => {
     if (!node.label) {
       errors.push(`node.label 缺失: ${node.id}`);
     }
+
+    const parentId = safeString(node.parentId);
+    if (!parentId) {
+      return;
+    }
+
+    if (parentId === node.id) {
+      errors.push(`node.parentId 自循環禁止: ${node.id}`);
+      return;
+    }
+
+    if (!nodeIds.has(parentId)) {
+      errors.push(`node.parentId 指向不存在節點: ${node.id}`);
+    }
   });
 
   (graph.edges || []).forEach((edge) => {
@@ -213,10 +331,14 @@ export const validateMindmapGraph = (graph) => {
     }
   });
 
+  if (errors.length === 0) {
+    const parentMap = buildEffectiveParentMap(graph.nodes || [], graph.edges || []);
+    errors.push(...detectParentCycles(parentMap));
+  }
+
   return {
     ok: errors.length === 0,
     errors,
     value: errors.length === 0 ? graph : null,
   };
 };
-

@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { moderateScale, scale as scaleSize, verticalScale } from "react-native-size-matters";
 import { borderRadius, colors, typography, spacing } from "../styles/theme";
 
@@ -22,20 +23,32 @@ export default function Header({
           <TouchableOpacity
             style={styles.signOutButton}
             onPress={onSignOut}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
           >
-            <Text style={styles.signOutText}>Sign Out</Text>
+            <Ionicons name="log-out-outline" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         )}
         <View style={styles.quickActions}>
-          <TouchableOpacity style={styles.menuButton} onPress={onMenuPress}>
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={onMenuPress}
+            accessibilityRole="button"
+            accessibilityLabel="Open sidebar"
+          >
             <View style={styles.menuLine} />
             <View style={styles.menuLine} />
             <View style={styles.menuLine} />
           </TouchableOpacity>
 
           {onCanvasPress && (
-            <TouchableOpacity style={styles.canvasButton} onPress={onCanvasPress}>
-              <Text style={styles.canvasButtonText}>Canvas</Text>
+            <TouchableOpacity
+              style={styles.canvasButton}
+              onPress={onCanvasPress}
+              accessibilityRole="button"
+              accessibilityLabel="Open canvas"
+            >
+              <Ionicons name="grid-outline" size={16} color={colors.textOnPrimary} />
             </TouchableOpacity>
           )}
         </View>
@@ -46,8 +59,8 @@ export default function Header({
 
 const styles = StyleSheet.create({
   header: {
-    height: vs(60),
-    paddingHorizontal: hs(spacing.lg),
+    height: vs(50),
+    paddingHorizontal: hs(spacing.md),
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -55,50 +68,45 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     ...typography.headerTitle,
-    fontSize: ms(typography.headerTitle.fontSize),
+    fontSize: ms(16),
   },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: ms(spacing.md),
+    gap: ms(spacing.sm),
   },
   quickActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: ms(spacing.sm),
+    gap: ms(spacing.xs),
   },
   signOutButton: {
-    paddingVertical: vs(spacing.xs),
-    paddingHorizontal: hs(spacing.md),
+    width: hs(32),
+    height: vs(32),
     borderRadius: ms(borderRadius.sm),
     backgroundColor: colors.disabled,
-  },
-  signOutText: {
-    fontSize: ms(14),
-    color: colors.textSecondary,
-    fontWeight: "500",
+    alignItems: "center",
+    justifyContent: "center",
   },
   menuButton: {
-    width: hs(28),
-    height: vs(24),
-    justifyContent: "space-between",
+    width: hs(32),
+    height: vs(32),
+    justifyContent: "center",
     alignItems: "center",
   },
   menuLine: {
-    width: "100%",
-    height: vs(3),
-    borderRadius: ms(2),
+    width: hs(14),
+    height: vs(2),
+    borderRadius: ms(1),
     backgroundColor: colors.textSecondary,
+    marginVertical: vs(1),
   },
   canvasButton: {
-    paddingVertical: vs(spacing.xs),
-    paddingHorizontal: hs(spacing.md),
+    width: hs(32),
+    height: vs(32),
     borderRadius: ms(borderRadius.sm),
     backgroundColor: colors.primary,
-  },
-  canvasButtonText: {
-    fontSize: ms(13),
-    color: colors.textOnPrimary,
-    fontWeight: "600",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
