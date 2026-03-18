@@ -16,11 +16,11 @@ export default function RenameModal({
   return (
     <View style={styles.renameOverlay}>
       <View style={styles.renameContainer}>
-        <Text style={styles.renameTitle}>修改聊天名稱</Text>
+        <Text style={styles.renameTitle}>修改任務名稱</Text>
         <TextInput
           value={title}
           onChangeText={onChangeTitle}
-          placeholder="輸入新的聊天名稱"
+          placeholder="輸入新的任務名稱"
           placeholderTextColor={colors.textLight}
           style={styles.renameInput}
         />

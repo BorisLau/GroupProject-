@@ -23,6 +23,7 @@ import MindMapEdgeLayer from "../../../components/MindMapEdgeLayer";
 import MobileSkiaCanvasLayer from "../../../components/MobileSkiaCanvasLayer";
 import MindMapNodeLayer from "../../../components/MindMapNodeLayer";
 import { useAuth } from "../../../contexts/AuthContext";
+import useConversations from "../../../hooks/useConversations";
 import useCanvasGraph from "../mindmap/useCanvasGraph";
 import { borderRadius, colors, spacing, typography } from "../../../styles/theme";
 
@@ -95,6 +96,11 @@ const getViewportCenterPoint = (viewportWidth, viewportHeight) => {
 export default function CanvasScreen() {
   const router = useRouter();
   const { session, loading: authLoading } = useAuth();
+  const {
+    loading: conversationsLoading,
+    currentConversation,
+    updateCurrentConversationGraph,
+  } = useConversations();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [isToolMenuExpanded, setIsToolMenuExpanded] = useState(false);
   const [dragModeEnabled, setDragModeEnabled] = useState(false);
@@ -116,8 +122,11 @@ export default function CanvasScreen() {
     removeNode,
     removeLatestConnectionForNode,
     connectNodes,
-  } = useCanvasGraph();
-  const graphTitle = graph.meta?.title || "Canvas";
+  } = useCanvasGraph({
+    graph: currentConversation?.mindmapGraph,
+    setGraph: updateCurrentConversationGraph,
+  });
+  const graphTitle = currentConversation?.title || graph.meta?.title || "Canvas";
 
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -522,7 +531,7 @@ export default function CanvasScreen() {
     };
   }, [getWebFocalPoint, handleWheel, scale, zoomAroundPoint]);
 
-  if (authLoading) {
+  if (authLoading || conversationsLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -604,6 +613,11 @@ export default function CanvasScreen() {
                   />
                 </Animated.View>
               </Animated.View>
+
+              {nodes.length === 0 ? (
+                <View pointerEvents="none" style={styles.emptyState}>
+                </View>
+              ) : null}
             </View>
           </GestureDetector>
 
@@ -745,5 +759,23 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.error,
     fontWeight: "600",
+  },
+  emptyState: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
+  emptyStateTitle: {
+    ...typography.title,
+    color: colors.textPrimary,
+    textAlign: "center",
+    marginBottom: spacing.sm,
+  },
+  emptyStateText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    textAlign: "center",
+    maxWidth: 320,
   },
 });

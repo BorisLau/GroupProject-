@@ -48,19 +48,22 @@ alter table public.mindmaps enable row level security;
 alter table public.mindmap_jobs enable row level security;
 
 -- user_ai_settings policies
-create policy if not exists "user_ai_settings_select_own"
+drop policy if exists "user_ai_settings_select_own" on public.user_ai_settings;
+create policy "user_ai_settings_select_own"
   on public.user_ai_settings
   for select
   to authenticated
   using (user_id = auth.uid());
 
-create policy if not exists "user_ai_settings_insert_own"
+drop policy if exists "user_ai_settings_insert_own" on public.user_ai_settings;
+create policy "user_ai_settings_insert_own"
   on public.user_ai_settings
   for insert
   to authenticated
   with check (user_id = auth.uid());
 
-create policy if not exists "user_ai_settings_update_own"
+drop policy if exists "user_ai_settings_update_own" on public.user_ai_settings;
+create policy "user_ai_settings_update_own"
   on public.user_ai_settings
   for update
   to authenticated
@@ -68,32 +71,37 @@ create policy if not exists "user_ai_settings_update_own"
   with check (user_id = auth.uid());
 
 -- mindmaps policies
-create policy if not exists "mindmaps_select_own"
+drop policy if exists "mindmaps_select_own" on public.mindmaps;
+create policy "mindmaps_select_own"
   on public.mindmaps
   for select
   to authenticated
   using (user_id = auth.uid());
 
-create policy if not exists "mindmaps_insert_own"
+drop policy if exists "mindmaps_insert_own" on public.mindmaps;
+create policy "mindmaps_insert_own"
   on public.mindmaps
   for insert
   to authenticated
   with check (user_id = auth.uid());
 
 -- mindmap_jobs policies
-create policy if not exists "mindmap_jobs_select_own"
+drop policy if exists "mindmap_jobs_select_own" on public.mindmap_jobs;
+create policy "mindmap_jobs_select_own"
   on public.mindmap_jobs
   for select
   to authenticated
   using (user_id = auth.uid());
 
-create policy if not exists "mindmap_jobs_insert_own"
+drop policy if exists "mindmap_jobs_insert_own" on public.mindmap_jobs;
+create policy "mindmap_jobs_insert_own"
   on public.mindmap_jobs
   for insert
   to authenticated
   with check (user_id = auth.uid());
 
-create policy if not exists "mindmap_jobs_update_own"
+drop policy if exists "mindmap_jobs_update_own" on public.mindmap_jobs;
+create policy "mindmap_jobs_update_own"
   on public.mindmap_jobs
   for update
   to authenticated

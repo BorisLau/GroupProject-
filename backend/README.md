@@ -35,6 +35,42 @@ uvicorn app.main:app --reload --port 8000
 celery -A celery_worker.celery_app worker --loglevel=info
 ```
 
+## Deploy to Render
+This project can run on Render with:
+- 1 Web Service for FastAPI
+- 1 Background Worker for Celery
+- 1 Key Value instance for Redis-compatible queueing
+
+The repo root includes [render.yaml](../render.yaml) for a Blueprint-based setup.
+
+### Render services
+- `ccit4080-backend`: FastAPI API server
+- `ccit4080-worker`: Celery worker
+- `ccit4080-redis`: Render Key Value instance
+
+### Required Render environment variables
+Set these during Blueprint creation when Render prompts for `sync: false` values:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `APP_ENCRYPTION_KEY`
+- `CORS_ORIGINS`
+
+Notes:
+- `APP_ENCRYPTION_KEY` should be a Fernet key.
+- `REDIS_URL` is injected automatically from the Key Value service.
+- `LOCAL_MINDMAP_OUTPUT_DIR` is set to `/tmp/mindmaps` on Render because the filesystem is ephemeral.
+
+### FastAPI start command on Render
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+### Celery worker start command on Render
+```bash
+celery -A celery_worker.celery_app worker --loglevel=info
+```
+
 ## API
 - `PUT /v1/settings/deepseek-key`
 - `GET /v1/settings/deepseek-key/status`

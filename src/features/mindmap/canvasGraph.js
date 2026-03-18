@@ -42,6 +42,15 @@ export const createCanvasNode = ({
   collapsed: false,
 });
 
+export const createEmptyCanvasGraph = ({ title = "Untitled Mindmap" } = {}) => ({
+  version: 1,
+  meta: {
+    title,
+  },
+  nodes: [],
+  edges: [],
+});
+
 export const createDemoCanvasGraph = () => {
   const rootNode = createCanvasNode({
     id: "node-root",

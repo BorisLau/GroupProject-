@@ -14,13 +14,15 @@ import { colors, typography, spacing, borderRadius, shadows } from "../styles/th
 const SIDEBAR_WIDTH = 260;
 const OPEN_ANIMATION_DURATION = 220;
 const CLOSE_ANIMATION_DURATION = 180;
+const DOUBLE_PRESS_DELAY_MS = 320;
 
 export default function Sidebar({
   isOpen,
   conversations,
   currentConversationId,
   onSelectConversation,
-  onLongPressConversation,
+  onRenameConversation,
+  onDeleteConversation,
   onNewConversation,
   onOpenSettings,
   onClose,
@@ -28,6 +30,21 @@ export default function Sidebar({
   const [shouldRender, setShouldRender] = useState(isOpen);
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
+  const pendingPressRef = useRef({
+    id: null,
+    timeoutId: null,
+  });
+
+  const clearPendingPress = () => {
+    if (pendingPressRef.current.timeoutId) {
+      clearTimeout(pendingPressRef.current.timeoutId);
+    }
+
+    pendingPressRef.current = {
+      id: null,
+      timeoutId: null,
+    };
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -71,9 +88,35 @@ export default function Sidebar({
     return undefined;
   }, [isOpen, overlayOpacity, translateX]);
 
+  useEffect(() => {
+    return () => {
+      clearPendingPress();
+    };
+  }, []);
+
   if (!shouldRender) {
     return null;
   }
+
+  const handleConversationPress = (conversation) => {
+    if (pendingPressRef.current.id === conversation.id) {
+      clearPendingPress();
+      onRenameConversation?.(conversation);
+      return;
+    }
+
+    clearPendingPress();
+
+    const timeoutId = setTimeout(() => {
+      onSelectConversation(conversation.id);
+      clearPendingPress();
+    }, DOUBLE_PRESS_DELAY_MS);
+
+    pendingPressRef.current = {
+      id: conversation.id,
+      timeoutId,
+    };
+  };
 
   return (
     <View style={styles.sidebarOverlay} pointerEvents="box-none">
@@ -93,7 +136,7 @@ export default function Sidebar({
           },
         ]}
       >
-        <Text style={styles.sidebarTitle}>聊天紀錄</Text>
+        <Text style={styles.sidebarTitle}>任務紀錄</Text>
 
         <ScrollView style={styles.sidebarList}>
           {conversations.map((conversation) => (
@@ -104,8 +147,8 @@ export default function Sidebar({
                 conversation.id === currentConversationId &&
                   styles.sidebarItemActive,
               ]}
-              onPress={() => onSelectConversation(conversation.id)}
-              onLongPress={() => onLongPressConversation(conversation)}
+              onPress={() => handleConversationPress(conversation)}
+              onLongPress={() => onDeleteConversation?.(conversation)}
             >
               <Text
                 style={[
@@ -122,7 +165,7 @@ export default function Sidebar({
 
         <View style={styles.footerActions}>
           <TouchableOpacity style={styles.newChatButton} onPress={onNewConversation}>
-            <Text style={styles.newChatButtonText}>+ 新的聊天</Text>
+            <Text style={styles.newChatButtonText}>+ 新的任務</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingsButton} onPress={onOpenSettings}>

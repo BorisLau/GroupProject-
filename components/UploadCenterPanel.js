@@ -47,8 +47,6 @@ export default function UploadCenterPanel({
           已選擇檔案：{selectedFileName}
         </Text>
       ) : null}
-
-      {statusText ? <Text style={styles.statusLabel}>{statusText}</Text> : null}
     </View>
   );
 }

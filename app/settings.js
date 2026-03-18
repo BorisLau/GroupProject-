@@ -1,75 +1,131 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
-import { getBackendBaseUrl, getDeepSeekKeyStatus, saveDeepSeekApiKey } from "../lib/backendApi";
-import { borderRadius, colors, spacing, typography, commonStyles } from "../styles/theme";
+import { supabase } from "../lib/supabase";
+import {
+  getDeepSeekKeyStatus,
+  saveDeepSeekApiKey,
+} from "../lib/backendApi";
+import {
+  borderRadius,
+  colors,
+  spacing,
+  typography,
+  commonStyles,
+} from "../styles/theme";
+
+const SETTINGS_SECTIONS = {
+  profile: "profile",
+  apiKey: "apiKey",
+};
+
+const getInitialDisplayName = (user) =>
+  user?.user_metadata?.display_name ||
+  user?.user_metadata?.full_name ||
+  "";
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, user } = useAuth();
+  const [activeSection, setActiveSection] = useState(SETTINGS_SECTIONS.profile);
+  const [displayName, setDisplayName] = useState(getInitialDisplayName(user));
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [hasKey, setHasKey] = useState(false);
-  const [message, setMessage] = useState("");
+  const [apiKeySaving, setApiKeySaving] = useState(false);
 
   const accessToken = useMemo(() => session?.access_token || "", [session]);
+  const email = user?.email || "未登入";
+
+  useEffect(() => {
+    setDisplayName(getInitialDisplayName(user));
+  }, [user]);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadStatus = async () => {
       if (!accessToken) {
-        setStatusLoading(false);
         return;
       }
 
       try {
-        const data = await getDeepSeekKeyStatus({ token: accessToken });
-        if (!cancelled) {
-          setHasKey(Boolean(data?.has_key));
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setMessage(error.message || "無法讀取 API Key 狀態");
+        await getDeepSeekKeyStatus({ token: accessToken });
+      } catch (_error) {
+        if (cancelled) {
+          return;
         }
       } finally {
-        if (!cancelled) {
-          setStatusLoading(false);
+        if (cancelled) {
+          return;
         }
       }
     };
 
     loadStatus();
+
     return () => {
       cancelled = true;
     };
   }, [accessToken]);
 
-  const handleSave = async () => {
-    const trimmedKey = apiKey.trim();
-    if (!trimmedKey) {
-      setMessage("請先輸入 DeepSeek API Key");
-      return;
-    }
-    if (!accessToken) {
-      setMessage("請先登入後再儲存 API Key");
+  const handleSaveProfile = async () => {
+    if (!session) {
+      setProfileMessage("請先登入後再設定 Profile");
       return;
     }
 
-    setSaving(true);
-    setMessage("");
+    setProfileSaving(true);
+    setProfileMessage("");
+
+    try {
+      const trimmedDisplayName = displayName.trim();
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          display_name: trimmedDisplayName,
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setProfileMessage("用戶 Profile 已更新");
+    } catch (error) {
+      setProfileMessage(error.message || "更新 Profile 失敗");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmedKey = apiKey.trim();
+    if (!trimmedKey) {
+      return;
+    }
+    if (!accessToken) {
+      return;
+    }
+
+    setApiKeySaving(true);
+
     try {
       await saveDeepSeekApiKey({ token: accessToken, apiKey: trimmedKey });
-      setHasKey(true);
       setApiKey("");
-      setMessage("DeepSeek API Key 已儲存");
-    } catch (error) {
-      setMessage(error.message || "儲存失敗");
+    } catch (_error) {
+      return;
     } finally {
-      setSaving(false);
+      setApiKeySaving(false);
     }
   };
 
@@ -81,50 +137,136 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>設定</Text>
-        <Text style={styles.subtitle}>
-          在這裡輸入 DeepSeek API Key。前端會把它送到後端並加密保存，供後端調用 DeepSeek 生成 mindmap JSON。
-        </Text>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>DeepSeek API Key</Text>
-          <TextInput
-            value={apiKey}
-            onChangeText={setApiKey}
-            placeholder="sk-..."
-            placeholderTextColor={colors.textLight}
-            autoCapitalize="none"
-            autoCorrect={false}
-            spellCheck={false}
-            style={styles.input}
-            secureTextEntry={true}
-          />
-
-          <View style={styles.statusRow}>
-            {statusLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={styles.statusText}>
-                {hasKey ? "目前已設定 API Key" : "尚未設定 API Key"}
-              </Text>
-            )}
-          </View>
+        <View style={styles.sectionSwitchRow}>
+          <TouchableOpacity
+            style={[
+              styles.sectionSwitchButton,
+              activeSection === SETTINGS_SECTIONS.profile &&
+                styles.sectionSwitchButtonActive,
+            ]}
+            onPress={() => setActiveSection(SETTINGS_SECTIONS.profile)}
+          >
+            <Ionicons
+              name="person-circle-outline"
+              size={18}
+              color={
+                activeSection === SETTINGS_SECTIONS.profile
+                  ? colors.textOnPrimary
+                  : colors.textSecondary
+              }
+            />
+            <Text
+              style={[
+                styles.sectionSwitchButtonText,
+                activeSection === SETTINGS_SECTIONS.profile &&
+                  styles.sectionSwitchButtonTextActive,
+              ]}
+            >
+              用戶 Profile
+            </Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-            disabled={saving}
-            onPress={handleSave}
+            style={[
+              styles.sectionSwitchButton,
+              activeSection === SETTINGS_SECTIONS.apiKey &&
+                styles.sectionSwitchButtonActive,
+            ]}
+            onPress={() => setActiveSection(SETTINGS_SECTIONS.apiKey)}
           >
-            <Text style={styles.saveButtonText}>
-              {saving ? "儲存中..." : "儲存 API Key"}
+            <Ionicons
+              name="key-outline"
+              size={18}
+              color={
+                activeSection === SETTINGS_SECTIONS.apiKey
+                  ? colors.textOnPrimary
+                  : colors.textSecondary
+              }
+            />
+            <Text
+              style={[
+                styles.sectionSwitchButtonText,
+                activeSection === SETTINGS_SECTIONS.apiKey &&
+                  styles.sectionSwitchButtonTextActive,
+              ]}
+            >
+              設置 API Key
             </Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.backendHint}>後端位址：{getBackendBaseUrl()}</Text>
-        {message ? <Text style={styles.messageText}>{message}</Text> : null}
-      </View>
+        {activeSection === SETTINGS_SECTIONS.profile ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>用戶 Profile</Text>
+
+            <Text style={styles.label}>Email</Text>
+            <View style={styles.readonlyField}>
+              <Text style={styles.readonlyValue}>{email}</Text>
+            </View>
+
+            <Text style={styles.label}>顯示名稱</Text>
+            <TextInput
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="輸入你的顯示名稱"
+              placeholderTextColor={colors.textLight}
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.input}
+            />
+
+            <TouchableOpacity
+              style={[styles.primaryButton, profileSaving && styles.primaryButtonDisabled]}
+              disabled={profileSaving}
+              onPress={handleSaveProfile}
+            >
+              <Text style={styles.primaryButtonText}>
+                {profileSaving ? "儲存中..." : "儲存 Profile"}
+              </Text>
+            </TouchableOpacity>
+
+            {profileMessage ? (
+              <Text style={styles.messageText}>{profileMessage}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {activeSection === SETTINGS_SECTIONS.apiKey ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>設置 API Key</Text>
+
+            <Text style={styles.label}>DeepSeek API Key</Text>
+            <TextInput
+              value={apiKey}
+              onChangeText={setApiKey}
+              placeholder="sk-..."
+              placeholderTextColor={colors.textLight}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              style={styles.input}
+              secureTextEntry={true}
+            />
+
+            <TouchableOpacity
+              style={[styles.primaryButton, apiKeySaving && styles.primaryButtonDisabled]}
+              disabled={apiKeySaving}
+              onPress={handleSaveApiKey}
+            >
+              <Text style={styles.primaryButtonText}>
+                {apiKeySaving ? "儲存中..." : "儲存 API Key"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -152,30 +294,63 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: "500",
   },
-  content: {
+  scrollView: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+  },
+  content: {
     paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxl,
+    alignItems: "center",
   },
   title: {
     ...typography.headerTitle,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.lg,
   },
-  subtitle: {
+  sectionSwitchRow: {
+    width: "100%",
+    maxWidth: 520,
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  sectionSwitchButton: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  sectionSwitchButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  sectionSwitchButtonText: {
     ...typography.bodySmall,
     color: colors.textSecondary,
-    textAlign: "center",
-    marginBottom: spacing.lg,
+    fontWeight: "600",
+  },
+  sectionSwitchButtonTextActive: {
+    color: colors.textOnPrimary,
   },
   card: {
     width: "100%",
-    maxWidth: 420,
+    maxWidth: 520,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderLight,
     borderRadius: borderRadius.md,
     padding: spacing.lg,
+  },
+  cardTitle: {
+    ...typography.title,
+    marginBottom: spacing.lg,
   },
   label: {
     ...typography.bodySmall,
@@ -186,41 +361,35 @@ const styles = StyleSheet.create({
   input: {
     ...commonStyles.input,
     height: 48,
+    marginBottom: spacing.md,
   },
-  statusRow: {
-    marginTop: spacing.sm,
-    minHeight: 22,
+  readonlyField: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.disabled,
     justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
   },
-  statusText: {
-    ...typography.caption,
-    color: colors.textSecondary,
+  readonlyValue: {
+    ...typography.bodySmall,
+    color: colors.textPrimary,
   },
-  saveButton: {
+  primaryButton: {
     marginTop: spacing.md,
     backgroundColor: colors.primary,
     borderRadius: borderRadius.sm,
     paddingVertical: spacing.sm,
     alignItems: "center",
   },
-  saveButtonDisabled: {
+  primaryButtonDisabled: {
     opacity: 0.6,
   },
-  saveButtonText: {
+  primaryButtonText: {
     ...typography.bodySmall,
     color: colors.textOnPrimary,
     fontWeight: "600",
-  },
-  backendHint: {
-    ...typography.captionSmall,
-    color: colors.textTertiary,
-    marginTop: spacing.md,
-    textAlign: "center",
-  },
-  messageText: {
-    ...typography.caption,
-    marginTop: spacing.sm,
-    color: colors.textSecondary,
-    textAlign: "center",
   },
 });

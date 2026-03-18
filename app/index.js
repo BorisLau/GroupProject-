@@ -1,6 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   StyleSheet,
   View,
   ActivityIndicator,
@@ -13,6 +14,7 @@ import Sidebar from "../components/Sidebar";
 import UploadCenterPanel from "../components/UploadCenterPanel";
 import RenameModal from "../components/RenameModal";
 import useConversations from "../hooks/useConversations";
+import { finalizeGeneratedMindmap } from "../src/features/mindmap/ai/generationPipeline";
 import {
   createMindmapJob,
   getDeepSeekKeyStatus,
@@ -29,21 +31,26 @@ export default function Index() {
   const { session, loading: authLoading, signOut } = useAuth();
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [attachedFileName, setAttachedFileName] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStatus, setGenerationStatus] = useState("");
   const [hasDeepSeekKey, setHasDeepSeekKey] = useState(false);
   const [isCheckingDeepSeekKey, setIsCheckingDeepSeekKey] = useState(true);
   const [renameTargetId, setRenameTargetId] = useState(null);
   const [renameTitle, setRenameTitle] = useState("");
 
   const {
+    loading: conversationsLoading,
     conversations,
+    currentConversation,
     currentConversationId,
     selectConversation,
     createNewConversation,
     renameConversation,
+    removeConversation,
+    updateConversation,
   } = useConversations();
+
+  const attachedFileName = currentConversation?.selectedFileName || "";
+  const isGenerating = Boolean(currentConversation?.isGenerating);
+  const generationStatus = currentConversation?.generationStatus || "";
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -79,14 +86,8 @@ export default function Index() {
     return undefined;
   }, [loadDeepSeekKeyStatus]));
 
-  useEffect(() => {
-    if (!session?.access_token) {
-      setGenerationStatus("");
-    }
-  }, [session?.access_token]);
-
   // Show loading screen while checking auth
-  if (authLoading) {
+  if (authLoading || conversationsLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -125,12 +126,20 @@ export default function Index() {
   };
 
   const handleAttachFile = async () => {
+    const targetConversationId = currentConversationId;
+
     if (isGenerating) {
       return;
     }
 
+    if (!targetConversationId) {
+      return;
+    }
+
     if (!session?.access_token) {
-      setGenerationStatus("尚未登入，無法呼叫後端生成。");
+      updateConversation(targetConversationId, {
+        generationStatus: "尚未登入，無法呼叫後端生成。",
+      });
       return;
     }
 
@@ -138,13 +147,17 @@ export default function Index() {
       const hasKey = await loadDeepSeekKeyStatus();
 
       if (!hasKey) {
-        setGenerationStatus("請先到設定頁輸入 DeepSeek API Key，後端才可調用 DeepSeek 生成 mindmap。");
+        updateConversation(targetConversationId, {
+          generationStatus: "請先到設定頁輸入 DeepSeek API Key，後端才可調用 DeepSeek 生成 mindmap。",
+        });
         router.push("/settings");
         return;
       }
     } catch (_error) {
       setHasDeepSeekKey(false);
-      setGenerationStatus("無法確認 DeepSeek API Key 狀態，請先到設定頁檢查。");
+      updateConversation(targetConversationId, {
+        generationStatus: "無法確認 DeepSeek API Key 狀態，請先到設定頁檢查。",
+      });
       router.push("/settings");
       return;
     }
@@ -166,9 +179,11 @@ export default function Index() {
 
       if (file && (file.name || file.uri)) {
         const displayName = file.name || "已選擇檔案";
-        setAttachedFileName(displayName);
-        setGenerationStatus("建立 AI 任務中...");
-        setIsGenerating(true);
+        updateConversation(targetConversationId, {
+          selectedFileName: displayName,
+          generationStatus: "建立 AI 任務中...",
+          isGenerating: true,
+        });
 
         const createResult = await createMindmapJob({
           token: session.access_token,
@@ -178,16 +193,22 @@ export default function Index() {
           language: "zh-TW",
         });
 
-        setGenerationStatus("任務已送出，AI 生成中...");
+        updateConversation(targetConversationId, {
+          generationStatus: "任務已送出，AI 生成中...",
+        });
         const finalJob = await pollJobUntilFinished(createResult.job_id, session.access_token);
 
         if (finalJob.status === "failed") {
-          setGenerationStatus(finalJob.error || "生成失敗，請稍後重試。");
+          updateConversation(targetConversationId, {
+            generationStatus: finalJob.error || "生成失敗，請稍後重試。",
+          });
           return;
         }
 
         if (!finalJob.mindmap_id) {
-          setGenerationStatus("生成完成，但找不到結果。");
+          updateConversation(targetConversationId, {
+            generationStatus: "生成完成，但找不到結果。",
+          });
           return;
         }
 
@@ -195,6 +216,19 @@ export default function Index() {
           token: session.access_token,
           mindmapId: finalJob.mindmap_id,
         });
+        const finalizedMindmap = finalizeGeneratedMindmap(mindmap?.graph_json, {
+          maxNodes: 100,
+          worldCenterX: 0,
+          worldCenterY: 0,
+        });
+
+        if (!finalizedMindmap.ok || !finalizedMindmap.canvasGraph) {
+          updateConversation(targetConversationId, {
+            generationStatus: "生成完成，但無法轉換成可編輯的 mindmap。",
+          });
+          return;
+        }
+
         const nodeCount = Array.isArray(mindmap?.graph_json?.nodes)
           ? mindmap.graph_json.nodes.length
           : 0;
@@ -202,19 +236,56 @@ export default function Index() {
           ? mindmap.graph_json.edges.length
           : 0;
 
-        setGenerationStatus(`生成完成：${nodeCount} 個節點、${edgeCount} 條連線。`);
+        updateConversation(targetConversationId, (conversation) => ({
+          ...conversation,
+          mindmapId: finalJob.mindmap_id,
+          mindmapGraph: finalizedMindmap.canvasGraph,
+          generationStatus: `生成完成：${nodeCount} 個節點、${edgeCount} 條連線。`,
+        }));
       }
     } catch (error) {
       console.warn("上傳與生成流程發生錯誤：", error);
-      setGenerationStatus(error.message || "上傳失敗");
+      updateConversation(targetConversationId, {
+        generationStatus: error.message || "上傳失敗",
+      });
     } finally {
-      setIsGenerating(false);
+      updateConversation(targetConversationId, {
+        isGenerating: false,
+      });
     }
   };
 
-  const handleLongPressConversation = (conversation) => {
+  const handleRenameConversation = (conversation) => {
     setRenameTargetId(conversation.id);
     setRenameTitle(conversation.title);
+  };
+
+  const handleDeleteConversation = (conversation) => {
+    if (!conversation?.id) {
+      return;
+    }
+
+    Alert.alert(
+      "刪除任務",
+      `確定要刪除「${conversation.title}」嗎？`,
+      [
+        {
+          text: "取消",
+          style: "cancel",
+        },
+        {
+          text: "刪除",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await removeConversation(conversation.id);
+            } catch (error) {
+              Alert.alert("刪除失敗", error?.message || "無法刪除任務，請稍後再試。");
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleRenameCancel = () => {
@@ -277,7 +348,8 @@ export default function Index() {
           conversations={conversations}
           currentConversationId={currentConversationId}
           onSelectConversation={handleSelectConversation}
-          onLongPressConversation={handleLongPressConversation}
+          onRenameConversation={handleRenameConversation}
+          onDeleteConversation={handleDeleteConversation}
           onNewConversation={handleNewConversation}
           onOpenSettings={handleOpenSettings}
           onClose={() => setIsSidebarOpen(false)}

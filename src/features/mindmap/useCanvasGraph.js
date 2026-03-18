@@ -13,8 +13,25 @@ const NEW_NODE_HEIGHT = 84;
 const createNodeId = () => `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const createEdgeId = () => `edge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-export default function useCanvasGraph() {
-  const [graph, setGraph] = useState(() => createDemoCanvasGraph());
+export default function useCanvasGraph({
+  graph: externalGraph,
+  setGraph: setExternalGraph,
+  createInitialGraph = createDemoCanvasGraph,
+} = {}) {
+  const [internalGraph, setInternalGraph] = useState(() => createInitialGraph());
+  const graph = externalGraph || internalGraph;
+  const setGraph = useCallback((nextGraphOrUpdater) => {
+    if (setExternalGraph) {
+      setExternalGraph(nextGraphOrUpdater);
+      return;
+    }
+
+    setInternalGraph((prev) =>
+      typeof nextGraphOrUpdater === "function"
+        ? nextGraphOrUpdater(prev)
+        : nextGraphOrUpdater
+    );
+  }, [setExternalGraph]);
 
   const updateNode = useCallback((nodeId, updater) => {
     setGraph((prev) => ({
@@ -23,7 +40,7 @@ export default function useCanvasGraph() {
         node.id === nodeId ? updater(node) : node
       ),
     }));
-  }, []);
+  }, [setGraph]);
 
   const updateNodeText = useCallback((nodeId, nextText) => {
     updateNode(nodeId, (node) => ({
@@ -63,7 +80,7 @@ export default function useCanvasGraph() {
         nodes: [...(prev.nodes || []), nextNode],
       };
     });
-  }, []);
+  }, [setGraph]);
 
   const removeNode = useCallback((nodeId) => {
     if (!nodeId) {
@@ -95,7 +112,7 @@ export default function useCanvasGraph() {
         edges: nextEdges,
       };
     });
-  }, []);
+  }, [setGraph]);
 
   const removeLatestConnectionForNode = useCallback((nodeId) => {
     if (!nodeId) {
@@ -123,7 +140,7 @@ export default function useCanvasGraph() {
         edges: edges.filter((_, index) => index !== removalIndex),
       };
     });
-  }, []);
+  }, [setGraph]);
 
   const connectNodes = useCallback((fromNodeId, toNodeId) => {
     if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) {
@@ -166,7 +183,7 @@ export default function useCanvasGraph() {
         edges: [...edges, nextEdge],
       };
     });
-  }, []);
+  }, [setGraph]);
 
   const addNodeFromHandle = useCallback((nodeId, side) => {
     setGraph((prev) => {
@@ -210,7 +227,7 @@ export default function useCanvasGraph() {
         edges: [...(prev.edges || []), nextEdge],
       };
     });
-  }, []);
+  }, [setGraph]);
 
   return {
     graph,
