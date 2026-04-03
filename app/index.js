@@ -1,5 +1,5 @@
 import * as DocumentPicker from "expo-document-picker";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   Alert,
   StyleSheet,
@@ -20,6 +20,10 @@ import {
   getDeepSeekKeyStatus,
   getMindmapById,
   getMindmapJob,
+  ApiError,
+  isAuthError,
+  isCancelledError,
+  createRequestController,
 } from "../lib/backendApi";
 import { colors } from "../styles/theme";
 
@@ -35,6 +39,11 @@ export default function Index() {
   const [isCheckingDeepSeekKey, setIsCheckingDeepSeekKey] = useState(true);
   const [renameTargetId, setRenameTargetId] = useState(null);
   const [renameTitle, setRenameTitle] = useState("");
+  
+  // 上传进度状态
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const uploadControllerRef = useRef(null);
 
   const {
     loading: conversationsLoading,
@@ -125,6 +134,56 @@ export default function Index() {
     throw new Error("等待 AI 生成逾時，請稍後再試。");
   };
 
+  // 清除上传状态
+  const clearUploadState = useCallback(() => {
+    setUploadProgress(0);
+    setUploadStatus("");
+    if (uploadControllerRef.current) {
+      uploadControllerRef.current = null;
+    }
+  }, []);
+
+  // 取消上传
+  const handleCancelUpload = useCallback(() => {
+    if (uploadControllerRef.current) {
+      uploadControllerRef.current.abort();
+      uploadControllerRef.current = null;
+    }
+    clearUploadState();
+    
+    if (currentConversationId) {
+      updateConversation(currentConversationId, {
+        isGenerating: false,
+        generationStatus: "上傳已取消",
+      });
+    }
+  }, [currentConversationId, updateConversation, clearUploadState]);
+
+  // 模拟上传进度（因为 fetch 不直接支持进度回调）
+  const simulateUploadProgress = useCallback((fileSize = 0) => {
+    let progress = 0;
+    // 根据文件大小计算上传速度（模拟）
+    // 假设上传速度为 100KB/s
+    const uploadSpeed = 100 * 1024; // 100KB/s
+    const estimatedTime = fileSize > 0 ? fileSize / uploadSpeed : 5; // 秒
+    const interval = (estimatedTime * 1000) / 90; // 分成 90 份到 90%
+    
+    setUploadProgress(0);
+    setUploadStatus("正在上傳文件...");
+    
+    const progressInterval = setInterval(() => {
+      progress += 1;
+      setUploadProgress(progress);
+      
+      if (progress >= 90) {
+        clearInterval(progressInterval);
+        setUploadStatus("等待服務器處理...");
+      }
+    }, Math.max(interval / 10, 50)); // 最小 50ms 更新一次
+    
+    return progressInterval;
+  }, []);
+
   const handleAttachFile = async () => {
     const targetConversationId = currentConversationId;
 
@@ -162,6 +221,10 @@ export default function Index() {
       return;
     }
 
+    // 创建取消控制器
+    const controller = createRequestController();
+    uploadControllerRef.current = controller;
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -179,75 +242,149 @@ export default function Index() {
 
       if (file && (file.name || file.uri)) {
         const displayName = file.name || "已選擇檔案";
+        const fileSize = file.size || 0;
+        
         updateConversation(targetConversationId, {
           selectedFileName: displayName,
-          generationStatus: "建立 AI 任務中...",
+          generationStatus: "正在上傳...",
           isGenerating: true,
         });
 
-        const createResult = await createMindmapJob({
-          token: session.access_token,
-          file,
-          title: displayName,
-          maxNodes: 50,
-          language: "zh-TW",
-        });
+        // 开始模拟进度
+        const progressInterval = simulateUploadProgress(fileSize);
 
-        updateConversation(targetConversationId, {
-          generationStatus: "任務已送出，AI 生成中...",
-        });
-        const finalJob = await pollJobUntilFinished(createResult.job_id, session.access_token);
-
-        if (finalJob.status === "failed") {
-          updateConversation(targetConversationId, {
-            generationStatus: finalJob.error || "生成失敗，請稍後重試。",
+        try {
+          const createResult = await createMindmapJob({
+            token: session.access_token,
+            file,
+            title: displayName,
+            maxNodes: 50,
+            language: "zh-TW",
+            signal: controller.signal,
           });
-          return;
-        }
 
-        if (!finalJob.mindmap_id) {
+          // 上传完成，进度到 100%
+          clearInterval(progressInterval);
+          setUploadProgress(100);
+          setUploadStatus("上傳完成，AI 處理中...");
+
           updateConversation(targetConversationId, {
-            generationStatus: "生成完成，但找不到結果。",
+            generationStatus: "任務已送出，AI 生成中...",
           });
-          return;
-        }
+          
+          // 清除控制器引用（上传已完成）
+          uploadControllerRef.current = null;
+          
+          const finalJob = await pollJobUntilFinished(createResult.job_id, session.access_token);
 
-        const mindmap = await getMindmapById({
-          token: session.access_token,
-          mindmapId: finalJob.mindmap_id,
-        });
-        const finalizedMindmap = finalizeGeneratedMindmap(mindmap?.graph_json, {
-          maxNodes: 100,
-          worldCenterX: 0,
-          worldCenterY: 0,
-        });
+          // 清理上传状态
+          clearUploadState();
 
-        if (!finalizedMindmap.ok || !finalizedMindmap.canvasGraph) {
-          updateConversation(targetConversationId, {
-            generationStatus: "生成完成，但無法轉換成可編輯的 mindmap。",
+          if (finalJob.status === "failed") {
+            const errorMsg = finalJob.error || "生成失敗，請稍後重試。";
+            updateConversation(targetConversationId, {
+              generationStatus: errorMsg,
+            });
+            
+            Alert.alert(
+              "AI 生成失敗",
+              errorMsg,
+              [{ text: "確定", style: "default" }]
+            );
+            return;
+          }
+
+          if (!finalJob.mindmap_id) {
+            updateConversation(targetConversationId, {
+              generationStatus: "生成完成，但找不到結果。",
+            });
+            return;
+          }
+
+          const mindmap = await getMindmapById({
+            token: session.access_token,
+            mindmapId: finalJob.mindmap_id,
           });
-          return;
+          const finalizedMindmap = finalizeGeneratedMindmap(mindmap?.graph_json, {
+            maxNodes: 100,
+            worldCenterX: 0,
+            worldCenterY: 0,
+          });
+
+          if (!finalizedMindmap.ok || !finalizedMindmap.canvasGraph) {
+            updateConversation(targetConversationId, {
+              generationStatus: "生成完成，但無法轉換成可編輯的 mindmap。",
+            });
+            return;
+          }
+
+          const nodeCount = Array.isArray(mindmap?.graph_json?.nodes)
+            ? mindmap.graph_json.nodes.length
+            : 0;
+          const edgeCount = Array.isArray(mindmap?.graph_json?.edges)
+            ? mindmap.graph_json.edges.length
+            : 0;
+
+          updateConversation(targetConversationId, (conversation) => ({
+            ...conversation,
+            mindmapId: finalJob.mindmap_id,
+            mindmapGraph: finalizedMindmap.canvasGraph,
+            generationStatus: `生成完成：${nodeCount} 個節點、${edgeCount} 條連線。`,
+          }));
+        } catch (uploadError) {
+          // 清除进度定时器
+          clearInterval(progressInterval);
+          
+          // 如果是用户取消，不显示错误
+          if (isCancelledError(uploadError)) {
+            console.log("用户取消了上传");
+            return;
+          }
+          
+          // 其他错误继续抛出
+          throw uploadError;
         }
-
-        const nodeCount = Array.isArray(mindmap?.graph_json?.nodes)
-          ? mindmap.graph_json.nodes.length
-          : 0;
-        const edgeCount = Array.isArray(mindmap?.graph_json?.edges)
-          ? mindmap.graph_json.edges.length
-          : 0;
-
-        updateConversation(targetConversationId, (conversation) => ({
-          ...conversation,
-          mindmapId: finalJob.mindmap_id,
-          mindmapGraph: finalizedMindmap.canvasGraph,
-          generationStatus: `生成完成：${nodeCount} 個節點、${edgeCount} 條連線。`,
-        }));
       }
     } catch (error) {
       console.warn("上傳與生成流程發生錯誤：", error);
+      
+      // 使用 ApiError 的用户友好消息，或兜底处理
+      let userFriendlyError = "上傳失敗，請稍後重試";
+      
+      if (error instanceof ApiError) {
+        // ApiError 已经提供了用户友好的错误消息
+        userFriendlyError = error.message;
+        
+        // 如果是认证错误，提示重新登录
+        if (isAuthError(error)) {
+          Alert.alert(
+            "登入已過期",
+            "您的登入已過期，請重新登入",
+            [
+              { text: "確定", onPress: () => router.replace("/login") }
+            ]
+          );
+          updateConversation(targetConversationId, {
+            isGenerating: false,
+            generationStatus: "登入已過期",
+          });
+          return;
+        }
+      } else if (error.message) {
+        // 兜底：使用错误原始消息
+        userFriendlyError = error.message;
+      }
+      
       updateConversation(targetConversationId, {
-        generationStatus: error.message || "上傳失敗",
+        generationStatus: userFriendlyError,
       });
+      
+      // 显示 Alert 提示用户
+      Alert.alert(
+        "生成失敗",
+        userFriendlyError,
+        [{ text: "確定", style: "default" }]
+      );
     } finally {
       updateConversation(targetConversationId, {
         isGenerating: false,
@@ -336,9 +473,11 @@ export default function Index() {
 
         <UploadCenterPanel
           onUploadPress={handleAttachFile}
+          onCancelPress={handleCancelUpload}
           selectedFileName={attachedFileName}
           isBusy={isGenerating}
-          statusText={generationStatus}
+          progress={uploadProgress}
+          statusText={uploadStatus || generationStatus}
           hasApiKey={hasDeepSeekKey}
           isCheckingApiKey={isCheckingDeepSeekKey}
         />

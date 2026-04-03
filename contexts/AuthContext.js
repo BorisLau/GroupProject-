@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
@@ -9,14 +16,36 @@ import { supabase } from "../lib/supabase";
 
 WebBrowser.maybeCompleteAuthSession();
 
+/**
+ * @typedef {Object} AuthError
+ * @property {string} message
+ * @property {string} [code]
+ */
+
+/**
+ * @typedef {Object} AuthContextValue
+ * @property {import("@supabase/supabase-js").Session|null} session
+ * @property {import("@supabase/supabase-js").User|null} user
+ * @property {boolean} loading
+ * @property {AuthError|null} error
+ * @property {(email: string, password: string) => Promise<{data?: any, error?: AuthError}>} signIn
+ * @property {(email: string, password: string) => Promise<{data?: any, error?: AuthError}>} signUp
+ * @property {(provider: string) => Promise<{data?: any, error?: AuthError}>} signInWithOAuth
+ * @property {() => Promise<{error?: AuthError}>} signOut
+ * @property {() => void} clearError
+ */
+
+/** @type {React.Context<AuthContextValue>} */
 const AuthContext = createContext({
   session: null,
   user: null,
   loading: true,
+  error: null,
   signIn: async () => {},
   signUp: async () => {},
   signInWithOAuth: async () => {},
   signOut: async () => {},
+  clearError: () => {},
 });
 
 export const useAuth = () => {
@@ -27,12 +56,32 @@ export const useAuth = () => {
   return context;
 };
 
+/**
+ * 使用 selector 获取特定 auth 状态，避免不必要重渲染
+ * @template T
+ * @param {(value: AuthContextValue) => T} selector
+ * @returns {T}
+ */
+export const useAuthSelector = (selector) => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuthSelector must be used within an AuthProvider");
+  }
+  return selector(context);
+};
+
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const createSessionFromUrl = async (url) => {
+  // 清除错误状态
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  const createSessionFromUrl = useCallback(async (url) => {
     const { params, errorCode } = QueryParams.getQueryParams(url);
 
     if (errorCode) {
@@ -67,9 +116,9 @@ export const AuthProvider = ({ children }) => {
     }
 
     return null;
-  };
+  }, []);
 
-  const waitForPersistedSession = async (timeoutMs = 6000) => {
+  const waitForPersistedSession = useCallback(async (timeoutMs = 6000) => {
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
@@ -85,9 +134,9 @@ export const AuthProvider = ({ children }) => {
     }
 
     return null;
-  };
+  }, []);
 
-  const isLikelyAuthCallbackUrl = (url) => {
+  const isLikelyAuthCallbackUrl = useCallback((url) => {
     if (!url) {
       return false;
     }
@@ -100,28 +149,39 @@ export const AuthProvider = ({ children }) => {
       url.includes("error=") ||
       url.includes("error_description=")
     );
-  };
+  }, []);
 
+  // 初始化会话监听
   useEffect(() => {
+    let isMounted = true;
+
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (isMounted) {
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+        setLoading(false);
+      }
     });
 
     // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (isMounted) {
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
+        setLoading(false);
+      }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
+  // Web 端 OAuth 回调处理
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") {
       return;
@@ -140,6 +200,7 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
+  // Native 端 deep link 处理
   useEffect(() => {
     if (Platform.OS === "web") {
       return;
@@ -169,115 +230,156 @@ export const AuthProvider = ({ children }) => {
     return () => {
       subscription.remove();
     };
+  }, [createSessionFromUrl, isLikelyAuthCallbackUrl]);
+
+  const signIn = useCallback(async (email, password) => {
+    setError(null);
+    try {
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) {
+        setError({ message: signInError.message, code: signInError.code });
+        return { error: { message: signInError.message, code: signInError.code } };
+      }
+      return { data };
+    } catch (err) {
+      const errorInfo = { message: err.message || "登录失败" };
+      setError(errorInfo);
+      return { error: errorInfo };
+    }
   }, []);
 
-  const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { data, error };
-  };
-
-  const signUp = async (email, password) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        // Deep link redirect for email confirmation
-        emailRedirectTo: "groupproject://",
-      },
-    });
-    return { data, error };
-  };
-
-  const signInWithOAuth = async (provider) => {
-    const isExpoGo =
-      Platform.OS !== "web" &&
-      Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-    const webOrigin =
-      Platform.OS === "web" && typeof window !== "undefined"
-        ? window.location.origin
-        : null;
-    const nativeRedirectTo = isExpoGo
-      ? makeRedirectUri({
-          preferLocalhost: false,
-        })
-      : makeRedirectUri({
-          scheme: "groupproject",
-          path: "auth/callback",
-        });
-
-    const redirectTo =
-      Platform.OS === "web"
-        ? webOrigin
-          ? `${webOrigin}/login`
-          : undefined
-        : nativeRedirectTo;
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo,
-        skipBrowserRedirect: Platform.OS !== "web",
-      },
-    });
-
-    if (error) {
-      return { data, error };
+  const signUp = useCallback(async (email, password) => {
+    setError(null);
+    try {
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: "groupproject://",
+        },
+      });
+      if (signUpError) {
+        setError({ message: signUpError.message, code: signUpError.code });
+        return { error: { message: signUpError.message, code: signUpError.code } };
+      }
+      return { data };
+    } catch (err) {
+      const errorInfo = { message: err.message || "注册失败" };
+      setError(errorInfo);
+      return { error: errorInfo };
     }
+  }, []);
 
-    // On web, Supabase handles redirect directly in the browser.
-    if (Platform.OS === "web") {
-      return { data, error: null };
-    }
+  const signInWithOAuth = useCallback(async (provider) => {
+    setError(null);
+    
+    try {
+      const isExpoGo =
+        Platform.OS !== "web" &&
+        Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+      const webOrigin =
+        Platform.OS === "web" && typeof window !== "undefined"
+          ? window.location.origin
+          : null;
+      const nativeRedirectTo = isExpoGo
+        ? makeRedirectUri({
+            preferLocalhost: false,
+          })
+        : makeRedirectUri({
+            scheme: "groupproject",
+            path: "auth/callback",
+          });
 
-    if (!data?.url) {
-      return {
-        data: null,
-        error: new Error("OAuth URL was not returned by Supabase."),
+      const redirectTo =
+        Platform.OS === "web"
+          ? webOrigin
+            ? `${webOrigin}/login`
+            : undefined
+          : nativeRedirectTo;
+
+      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: Platform.OS !== "web",
+        },
+      });
+
+      if (oauthError) {
+        setError({ message: oauthError.message });
+        return { error: { message: oauthError.message } };
+      }
+
+      // On web, Supabase handles redirect directly in the browser.
+      if (Platform.OS === "web") {
+        return { data };
+      }
+
+      if (!data?.url) {
+        const errorInfo = { message: "OAuth URL was not returned by Supabase." };
+        setError(errorInfo);
+        return { error: errorInfo };
+      }
+
+      const authResult = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+      if (authResult.type === "success" && authResult.url) {
+        const sessionData = await createSessionFromUrl(authResult.url);
+        return { data: sessionData };
+      }
+
+      // In mobile clients, the session may already be persisted by deep-link listeners
+      const existingSession = await waitForPersistedSession();
+      if (existingSession) {
+        return { data: { session: existingSession } };
+      }
+
+      const errorInfo = {
+        message: "OAuth did not return to app. Please verify Supabase Redirect URLs include your app redirect URI.",
       };
+      setError(errorInfo);
+      return { error: errorInfo };
+    } catch (err) {
+      const errorInfo = { message: err.message || "OAuth 登录失败" };
+      setError(errorInfo);
+      return { error: errorInfo };
     }
+  }, [createSessionFromUrl, waitForPersistedSession]);
 
-    const authResult = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-
-    if (authResult.type === "success" && authResult.url) {
-      const sessionData = await createSessionFromUrl(authResult.url);
-      return {
-        data: sessionData,
-        error: null,
-      };
+  const signOut = useCallback(async () => {
+    setError(null);
+    try {
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        setError({ message: signOutError.message });
+        return { error: { message: signOutError.message } };
+      }
+      return {};
+    } catch (err) {
+      const errorInfo = { message: err.message || "退出失败" };
+      setError(errorInfo);
+      return { error: errorInfo };
     }
+  }, []);
 
-    // In mobile clients, the session may already be persisted by deep-link listeners
-    // even when the auth session result isn't "success".
-    const existingSession = await waitForPersistedSession();
-    if (existingSession) {
-      return { data: { session: existingSession }, error: null };
-    }
-
-    return {
-      data: null,
-      error: new Error(
-        "OAuth did not return to app. Please verify Supabase Redirect URLs include your app redirect URI."
-      ),
-    };
-  };
-
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    return { error };
-  };
-
-  const value = {
-    session,
-    user,
-    loading,
-    signIn,
-    signUp,
-    signInWithOAuth,
-    signOut,
-  };
+  // 使用 useMemo 缓存 value，避免不必要的重渲染
+  const value = useMemo(
+    () => ({
+      session,
+      user,
+      loading,
+      error,
+      signIn,
+      signUp,
+      signInWithOAuth,
+      signOut,
+      clearError,
+    }),
+    [session, user, loading, error, signIn, signUp, signInWithOAuth, signOut, clearError]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

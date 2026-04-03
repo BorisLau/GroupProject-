@@ -17,8 +17,12 @@ import {
 import { createEmptyCanvasGraph } from "../src/features/mindmap/canvasGraph";
 
 const ConversationsContext = createContext(null);
+const ConversationsDispatchContext = createContext(null);
+
 const SAVE_DEBOUNCE_MS = 700;
 const SAVE_RETRY_DELAY_MS = 2000;
+
+// ============ 工具函数 ============
 
 const createConversationId = () =>
   "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
@@ -34,7 +38,6 @@ const normalizeTitle = (title, fallbackTitle = buildConversationTitle(1)) => {
   if (typeof title !== "string") {
     return fallbackTitle;
   }
-
   const nextTitle = title.trim();
   return nextTitle || fallbackTitle;
 };
@@ -80,13 +83,7 @@ const normalizeConversationRecord = (conversation, fallbackTitle) => {
 };
 
 const createConversationRecord = ({ id, title }) =>
-  normalizeConversationRecord(
-    {
-      id,
-      title,
-    },
-    title
-  );
+  normalizeConversationRecord({ id, title }, title);
 
 const createInitialConversationState = () => {
   const initialId = createConversationId();
@@ -120,25 +117,37 @@ const applyConversationUpdate = (conversation, updater) => {
   );
 };
 
+// ============ Provider ============
+
 export function ConversationsProvider({ children }) {
   const { session, loading: authLoading } = useAuth();
+  
+  // 使用 useMemo 缓存初始状态
   const initialState = useMemo(() => createInitialConversationState(), []);
+  
+  // 状态
   const [conversations, setConversations] = useState(initialState.conversations);
   const [currentConversationId, setCurrentConversationId] = useState(
     initialState.currentConversationId
   );
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Refs
   const conversationsRef = useRef(initialState.conversations);
   const dirtyConversationIdsRef = useRef(new Set());
   const saveTimeoutRef = useRef(null);
   const hasHydratedRef = useRef(false);
   const flushDirtyConversationsRef = useRef(async () => {});
+
   const userId = session?.user?.id || null;
 
+  // 同步 ref
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
 
+  // 计算当前对话 - 使用 useMemo 缓存
   const currentConversation = useMemo(
     () =>
       conversations.find(
@@ -147,10 +156,7 @@ export function ConversationsProvider({ children }) {
     [conversations, currentConversationId]
   );
 
-  const selectConversation = useCallback((id) => {
-    setCurrentConversationId(id);
-  }, []);
-
+  // 取消定时保存
   const cancelScheduledSave = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -158,18 +164,7 @@ export function ConversationsProvider({ children }) {
     }
   }, []);
 
-  const scheduleSave = useCallback((delayMs = SAVE_DEBOUNCE_MS) => {
-    if (!userId || !hasHydratedRef.current) {
-      return;
-    }
-
-    cancelScheduledSave();
-    saveTimeoutRef.current = setTimeout(() => {
-      saveTimeoutRef.current = null;
-      void flushDirtyConversationsRef.current();
-    }, delayMs);
-  }, [cancelScheduledSave, userId]);
-
+  // 立即保存脏数据
   const flushDirtyConversations = useCallback(async () => {
     cancelScheduledSave();
 
@@ -209,15 +204,34 @@ export function ConversationsProvider({ children }) {
       await upsertTaskRecords({ records });
     } catch (error) {
       console.warn("Failed to persist task records:", error);
+      setError({ message: "保存失败", details: error.message });
       dirtyIds.forEach((id) => dirtyConversationIdsRef.current.add(id));
-      scheduleSave(SAVE_RETRY_DELAY_MS);
+      // 延迟重试
+      saveTimeoutRef.current = setTimeout(() => {
+        flushDirtyConversationsRef.current();
+      }, SAVE_RETRY_DELAY_MS);
     }
-  }, [cancelScheduledSave, scheduleSave, userId]);
+  }, [cancelScheduledSave, userId]);
 
+  // 更新 ref
   useEffect(() => {
     flushDirtyConversationsRef.current = flushDirtyConversations;
   }, [flushDirtyConversations]);
 
+  // 定时保存
+  const scheduleSave = useCallback((delayMs = SAVE_DEBOUNCE_MS) => {
+    if (!userId || !hasHydratedRef.current) {
+      return;
+    }
+
+    cancelScheduledSave();
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      void flushDirtyConversationsRef.current();
+    }, delayMs);
+  }, [cancelScheduledSave, userId]);
+
+  // 标记脏数据
   const markConversationDirty = useCallback((id) => {
     if (!id || !userId || !hasHydratedRef.current) {
       return;
@@ -226,6 +240,12 @@ export function ConversationsProvider({ children }) {
     dirtyConversationIdsRef.current.add(id);
     scheduleSave();
   }, [scheduleSave, userId]);
+
+  // ============ Actions ============
+
+  const selectConversation = useCallback((id) => {
+    setCurrentConversationId(id);
+  }, []);
 
   const updateConversation = useCallback((id, updater, options = {}) => {
     if (!id) {
@@ -249,7 +269,6 @@ export function ConversationsProvider({ children }) {
     if (!currentConversationId) {
       return;
     }
-
     updateConversation(currentConversationId, updater);
   }, [currentConversationId, updateConversation]);
 
@@ -291,7 +310,11 @@ export function ConversationsProvider({ children }) {
   }, [markConversationDirty]);
 
   const addMessage = useCallback((text, fileName = "") => {
-    updateCurrentConversation((conversation) => {
+    if (!currentConversationId) {
+      return;
+    }
+
+    updateConversation(currentConversationId, (conversation) => {
       const userMessage = {
         id: `${Date.now()}-user`,
         role: "user",
@@ -311,7 +334,7 @@ export function ConversationsProvider({ children }) {
         messages: [...conversation.messages, userMessage, aiMessage],
       };
     });
-  }, [updateCurrentConversation]);
+  }, [currentConversationId, updateConversation]);
 
   const renameConversation = useCallback((id, newTitle) => {
     updateConversation(id, (conversation) => ({
@@ -351,7 +374,6 @@ export function ConversationsProvider({ children }) {
       if (prevCurrentConversationId !== id) {
         return prevCurrentConversationId;
       }
-
       return replacementConversation?.id || null;
     });
 
@@ -363,6 +385,7 @@ export function ConversationsProvider({ children }) {
       }
     } catch (error) {
       console.warn("Failed to delete task record:", error);
+      setError({ message: "删除失败", details: error.message });
       throw error;
     }
 
@@ -372,6 +395,13 @@ export function ConversationsProvider({ children }) {
     }
   }, [scheduleSave, userId]);
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  // ============ 数据同步 ============
+
+  // 用户登录后加载数据
   useEffect(() => {
     if (authLoading) {
       return;
@@ -388,15 +418,16 @@ export function ConversationsProvider({ children }) {
       return;
     }
 
-    let cancelled = false;
+    let isCancelled = false;
 
     const hydrateTaskRecords = async () => {
       setLoading(true);
+      setError(null);
 
       try {
         const records = await listTaskRecords();
 
-        if (cancelled) {
+        if (isCancelled) {
           return;
         }
 
@@ -441,18 +472,19 @@ export function ConversationsProvider({ children }) {
         setConversations(hydratedConversations);
         setCurrentConversationId(hydratedConversations[0]?.id || null);
         hasHydratedRef.current = true;
-      } catch (error) {
-        console.warn("Failed to load task records:", error);
-        if (cancelled) {
+      } catch (err) {
+        console.warn("Failed to load task records:", err);
+        if (isCancelled) {
           return;
         }
+        setError({ message: "加载数据失败", details: err.message });
 
         const nextInitialState = createInitialConversationState();
         setConversations(nextInitialState.conversations);
         setCurrentConversationId(nextInitialState.currentConversationId);
         hasHydratedRef.current = true;
       } finally {
-        if (!cancelled) {
+        if (!isCancelled) {
           setLoading(false);
         }
       }
@@ -461,10 +493,11 @@ export function ConversationsProvider({ children }) {
     hydrateTaskRecords();
 
     return () => {
-      cancelled = true;
+      isCancelled = true;
     };
   }, [authLoading, cancelScheduledSave, userId]);
 
+  // App 进入后台时保存
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
@@ -477,6 +510,7 @@ export function ConversationsProvider({ children }) {
     };
   }, []);
 
+  // 组件卸载时保存
   useEffect(() => {
     return () => {
       void flushDirtyConversationsRef.current();
@@ -484,12 +518,23 @@ export function ConversationsProvider({ children }) {
     };
   }, [cancelScheduledSave]);
 
-  const value = useMemo(
+  // ============ Context Values ============
+
+  // 状态值 - 使用 useMemo 缓存
+  const stateValue = useMemo(
     () => ({
       loading,
+      error,
       conversations,
       currentConversation,
       currentConversationId,
+    }),
+    [loading, error, conversations, currentConversation, currentConversationId]
+  );
+
+  // 操作函数 - 使用 useMemo 缓存，函数引用稳定
+  const dispatchValue = useMemo(
+    () => ({
       selectConversation,
       createNewConversation,
       addMessage,
@@ -498,12 +543,9 @@ export function ConversationsProvider({ children }) {
       updateConversation,
       updateCurrentConversation,
       updateCurrentConversationGraph,
+      clearError,
     }),
     [
-      loading,
-      conversations,
-      currentConversation,
-      currentConversationId,
       selectConversation,
       createNewConversation,
       addMessage,
@@ -512,22 +554,92 @@ export function ConversationsProvider({ children }) {
       updateConversation,
       updateCurrentConversation,
       updateCurrentConversationGraph,
+      clearError,
     ]
   );
 
   return (
-    <ConversationsContext.Provider value={value}>
-      {children}
+    <ConversationsContext.Provider value={stateValue}>
+      <ConversationsDispatchContext.Provider value={dispatchValue}>
+        {children}
+      </ConversationsDispatchContext.Provider>
     </ConversationsContext.Provider>
   );
 }
 
-export default function useConversations() {
+// ============ Hooks ============
+
+/**
+ * 获取所有对话状态（慎用，会订阅所有状态变化）
+ * @returns {{
+ *   loading: boolean,
+ *   error: Error|null,
+ *   conversations: Array,
+ *   currentConversation: Object|null,
+ *   currentConversationId: string|null
+ * }}
+ */
+export function useConversationsState() {
   const context = useContext(ConversationsContext);
-
   if (!context) {
-    throw new Error("useConversations must be used within a ConversationsProvider");
+    throw new Error("useConversationsState must be used within ConversationsProvider");
   }
-
   return context;
+}
+
+/**
+ * 获取对话操作函数（不会触发重渲染）
+ * @returns {Object}
+ */
+export function useConversationsDispatch() {
+  const context = useContext(ConversationsDispatchContext);
+  if (!context) {
+    throw new Error("useConversationsDispatch must be used within ConversationsProvider");
+  }
+  return context;
+}
+
+/**
+ * 使用 selector 获取特定状态，避免不必要重渲染
+ * @template T
+ * @param {(state: ReturnType<typeof useConversationsState>) => T} selector
+ * @returns {T}
+ */
+export function useConversationsSelector(selector) {
+  const state = useConversationsState();
+  return selector(state);
+}
+
+/**
+ * 兼容旧版本的 hook（组合状态和操作）
+ * @returns {ReturnType<typeof useConversationsState> & ReturnType<typeof useConversationsDispatch>}
+ */
+export default function useConversations() {
+  const state = useConversationsState();
+  const dispatch = useConversationsDispatch();
+  return useMemo(() => ({ ...state, ...dispatch }), [state, dispatch]);
+}
+
+/**
+ * 仅获取当前对话（优化版本）
+ * @returns {Object|null}
+ */
+export function useCurrentConversation() {
+  return useConversationsSelector((state) => state.currentConversation);
+}
+
+/**
+ * 仅获取对话列表（优化版本）
+ * @returns {Array}
+ */
+export function useConversationsList() {
+  return useConversationsSelector((state) => state.conversations);
+}
+
+/**
+ * 仅获取加载状态
+ * @returns {boolean}
+ */
+export function useConversationsLoading() {
+  return useConversationsSelector((state) => state.loading);
 }

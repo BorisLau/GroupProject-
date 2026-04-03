@@ -108,22 +108,40 @@ export default function SettingsScreen() {
     }
   };
 
+  const [apiKeyMessage, setApiKeyMessage] = useState("");
+  const [apiKeyMessageType, setApiKeyMessageType] = useState(""); // 'success' | 'error'
+
   const handleSaveApiKey = async () => {
     const trimmedKey = apiKey.trim();
     if (!trimmedKey) {
+      setApiKeyMessage("請輸入 API Key");
+      setApiKeyMessageType("error");
       return;
     }
     if (!accessToken) {
+      setApiKeyMessage("請先登入");
+      setApiKeyMessageType("error");
       return;
     }
 
     setApiKeySaving(true);
+    setApiKeyMessage("");
 
     try {
       await saveDeepSeekApiKey({ token: accessToken, apiKey: trimmedKey });
       setApiKey("");
-    } catch (_error) {
-      return;
+      setApiKeyMessage("API Key 已保存成功！");
+      setApiKeyMessageType("success");
+      
+      // 3 秒後自動清除成功消息
+      setTimeout(() => {
+        setApiKeyMessage("");
+        setApiKeyMessageType("");
+      }, 3000);
+    } catch (error) {
+      const errorMsg = error?.message || "保存失敗，請檢查網絡後重試";
+      setApiKeyMessage(errorMsg);
+      setApiKeyMessageType("error");
     } finally {
       setApiKeySaving(false);
     }
@@ -264,6 +282,18 @@ export default function SettingsScreen() {
                 {apiKeySaving ? "儲存中..." : "儲存 API Key"}
               </Text>
             </TouchableOpacity>
+
+            {apiKeyMessage ? (
+              <Text
+                style={[
+                  styles.messageText,
+                  apiKeyMessageType === "success" && styles.messageTextSuccess,
+                  apiKeyMessageType === "error" && styles.messageTextError,
+                ]}
+              >
+                {apiKeyMessage}
+              </Text>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -391,5 +421,16 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textOnPrimary,
     fontWeight: "600",
+  },
+  messageText: {
+    ...typography.bodySmall,
+    marginTop: spacing.md,
+    textAlign: "center",
+  },
+  messageTextSuccess: {
+    color: colors.success,
+  },
+  messageTextError: {
+    color: colors.error,
   },
 });

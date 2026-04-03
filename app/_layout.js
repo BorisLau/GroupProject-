@@ -2,8 +2,10 @@ import { Stack } from "expo-router";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../contexts/AuthContext";
 import { ConversationsProvider } from "../hooks/useConversations";
+import { memo } from "react";
 
-export default function RootLayout() {
+// 使用 memo 避免不必要的重渲染
+const RootLayout = memo(function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
@@ -22,4 +24,6 @@ export default function RootLayout() {
       </AuthProvider>
     </SafeAreaProvider>
   );
-}
+});
+
+export default RootLayout;
