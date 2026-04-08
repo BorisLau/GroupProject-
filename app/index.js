@@ -16,23 +16,20 @@ import RenameModal from "../components/RenameModal";
 import useConversations from "../hooks/useConversations";
 import { finalizeGeneratedMindmap } from "../src/features/mindmap/ai/generationPipeline";
 import {
-  createMindmapJob,
-  getDeepSeekKeyStatus,
-  getMindmapById,
-  getMindmapJob,
+  getBackendBaseUrl,
+  getOpenRouterKeyStatus,
+  generateMindmap,
 } from "../lib/backendApi";
 import { colors } from "../styles/theme";
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const MAX_POLL_ATTEMPTS = 90;
 
 export default function Index() {
   const router = useRouter();
   const { session, loading: authLoading, signOut } = useAuth();
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [hasDeepSeekKey, setHasDeepSeekKey] = useState(false);
-  const [isCheckingDeepSeekKey, setIsCheckingDeepSeekKey] = useState(true);
+  const [hasOpenRouterKey, setHasOpenRouterKey] = useState(false);
+  const [isCheckingOpenRouterKey, setIsCheckingOpenRouterKey] = useState(true);
+  const [openRouterStatusMessage, setOpenRouterStatusMessage] = useState("");
   const [renameTargetId, setRenameTargetId] = useState(null);
   const [renameTitle, setRenameTitle] = useState("");
 
@@ -51,6 +48,7 @@ export default function Index() {
   const attachedFileName = currentConversation?.selectedFileName || "";
   const isGenerating = Boolean(currentConversation?.isGenerating);
   const generationStatus = currentConversation?.generationStatus || "";
+  const panelStatusText = generationStatus || openRouterStatusMessage;
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -59,32 +57,51 @@ export default function Index() {
     }
   }, [session, authLoading, router]);
 
-  const loadDeepSeekKeyStatus = useCallback(async () => {
+  const loadOpenRouterKeyStatus = useCallback(async () => {
     if (!session?.access_token) {
-      setHasDeepSeekKey(false);
-      setIsCheckingDeepSeekKey(false);
-      return false;
+      const message = "尚未登入，暫時無法檢查 OpenRouter API Key 狀態。";
+      setHasOpenRouterKey(false);
+      setIsCheckingOpenRouterKey(false);
+      setOpenRouterStatusMessage(message);
+      return {
+        hasKey: false,
+        statusMessage: message,
+      };
     }
 
-    setIsCheckingDeepSeekKey(true);
+    setIsCheckingOpenRouterKey(true);
 
     try {
-      const result = await getDeepSeekKeyStatus({ token: session.access_token });
+      const result = await getOpenRouterKeyStatus({ token: session.access_token });
       const hasKey = Boolean(result?.has_key);
-      setHasDeepSeekKey(hasKey);
-      return hasKey;
-    } catch (_error) {
-      setHasDeepSeekKey(false);
-      return false;
+      const statusMessage = hasKey
+        ? ""
+        : "尚未設定 OpenRouter API Key。需要生成 mindmap 時，可到設定頁手動輸入。";
+      setHasOpenRouterKey(hasKey);
+      setOpenRouterStatusMessage(statusMessage);
+      return {
+        hasKey,
+        statusMessage,
+      };
+    } catch (error) {
+      const statusMessage =
+        error?.message ||
+        `無法確認 OpenRouter API Key 狀態。請檢查後端是否可連線：${getBackendBaseUrl()}`;
+      setHasOpenRouterKey(false);
+      setOpenRouterStatusMessage(statusMessage);
+      return {
+        hasKey: false,
+        statusMessage,
+      };
     } finally {
-      setIsCheckingDeepSeekKey(false);
+      setIsCheckingOpenRouterKey(false);
     }
   }, [session?.access_token]);
 
   useFocusEffect(useCallback(() => {
-    loadDeepSeekKeyStatus();
+    loadOpenRouterKeyStatus();
     return undefined;
-  }, [loadDeepSeekKeyStatus]));
+  }, [loadOpenRouterKeyStatus]));
 
   // Show loading screen while checking auth
   if (authLoading || conversationsLoading) {
@@ -113,18 +130,6 @@ export default function Index() {
     createNewConversation();
   };
 
-  const pollJobUntilFinished = async (jobId, token) => {
-    for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-      const job = await getMindmapJob({ token, jobId });
-      if (job.status === "succeeded" || job.status === "failed") {
-        return job;
-      }
-      await sleep(2000);
-    }
-
-    throw new Error("等待 AI 生成逾時，請稍後再試。");
-  };
-
   const handleAttachFile = async () => {
     const targetConversationId = currentConversationId;
 
@@ -144,21 +149,33 @@ export default function Index() {
     }
 
     try {
-      const hasKey = await loadDeepSeekKeyStatus();
+      const { hasKey, statusMessage } = await loadOpenRouterKeyStatus();
 
       if (!hasKey) {
+        const message =
+          statusMessage ||
+          "請先到設定頁輸入 OpenRouter API Key，後端才可調用 OpenRouter 生成 mindmap。";
         updateConversation(targetConversationId, {
-          generationStatus: "請先到設定頁輸入 DeepSeek API Key，後端才可調用 DeepSeek 生成 mindmap。",
+          generationStatus: message,
         });
-        router.push("/settings");
+        Alert.alert("需要設定 OpenRouter API Key", message, [
+          { text: "稍後再說", style: "cancel" },
+          { text: "前往設定", onPress: () => router.push("/settings") },
+        ]);
         return;
       }
-    } catch (_error) {
-      setHasDeepSeekKey(false);
+    } catch (error) {
+      setHasOpenRouterKey(false);
+      const message =
+        error?.message ||
+        `無法確認 OpenRouter API Key 狀態。請檢查後端是否可連線：${getBackendBaseUrl()}`;
       updateConversation(targetConversationId, {
-        generationStatus: "無法確認 DeepSeek API Key 狀態，請先到設定頁檢查。",
+        generationStatus: message,
       });
-      router.push("/settings");
+      Alert.alert("暫時無法連線到後端", message, [
+        { text: "知道了", style: "cancel" },
+        { text: "前往設定", onPress: () => router.push("/settings") },
+      ]);
       return;
     }
 
@@ -181,11 +198,11 @@ export default function Index() {
         const displayName = file.name || "已選擇檔案";
         updateConversation(targetConversationId, {
           selectedFileName: displayName,
-          generationStatus: "建立 AI 任務中...",
+          generationStatus: "AI 生成中...",
           isGenerating: true,
         });
 
-        const createResult = await createMindmapJob({
+        const result = await generateMindmap({
           token: session.access_token,
           file,
           title: displayName,
@@ -193,30 +210,13 @@ export default function Index() {
           language: "zh-TW",
         });
 
-        updateConversation(targetConversationId, {
-          generationStatus: "任務已送出，AI 生成中...",
-        });
-        const finalJob = await pollJobUntilFinished(createResult.job_id, session.access_token);
-
-        if (finalJob.status === "failed") {
-          updateConversation(targetConversationId, {
-            generationStatus: finalJob.error || "生成失敗，請稍後重試。",
-          });
-          return;
-        }
-
-        if (!finalJob.mindmap_id) {
+        if (!result?.mindmap_id || !result?.graph_json) {
           updateConversation(targetConversationId, {
             generationStatus: "生成完成，但找不到結果。",
           });
           return;
         }
-
-        const mindmap = await getMindmapById({
-          token: session.access_token,
-          mindmapId: finalJob.mindmap_id,
-        });
-        const finalizedMindmap = finalizeGeneratedMindmap(mindmap?.graph_json, {
+        const finalizedMindmap = finalizeGeneratedMindmap(result.graph_json, {
           maxNodes: 100,
           worldCenterX: 0,
           worldCenterY: 0,
@@ -229,16 +229,16 @@ export default function Index() {
           return;
         }
 
-        const nodeCount = Array.isArray(mindmap?.graph_json?.nodes)
-          ? mindmap.graph_json.nodes.length
+        const nodeCount = Array.isArray(result?.graph_json?.nodes)
+          ? result.graph_json.nodes.length
           : 0;
-        const edgeCount = Array.isArray(mindmap?.graph_json?.edges)
-          ? mindmap.graph_json.edges.length
+        const edgeCount = Array.isArray(result?.graph_json?.edges)
+          ? result.graph_json.edges.length
           : 0;
 
         updateConversation(targetConversationId, (conversation) => ({
           ...conversation,
-          mindmapId: finalJob.mindmap_id,
+          mindmapId: result.mindmap_id,
           mindmapGraph: finalizedMindmap.canvasGraph,
           generationStatus: `生成完成：${nodeCount} 個節點、${edgeCount} 條連線。`,
         }));
@@ -338,9 +338,9 @@ export default function Index() {
           onUploadPress={handleAttachFile}
           selectedFileName={attachedFileName}
           isBusy={isGenerating}
-          statusText={generationStatus}
-          hasApiKey={hasDeepSeekKey}
-          isCheckingApiKey={isCheckingDeepSeekKey}
+          statusText={panelStatusText}
+          hasApiKey={hasOpenRouterKey}
+          isCheckingApiKey={isCheckingOpenRouterKey}
         />
 
         <Sidebar

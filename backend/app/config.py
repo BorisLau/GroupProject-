@@ -18,15 +18,12 @@ class Settings(BaseSettings):
 
     app_encryption_key: str
 
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
-
-    redis_url: str | None = None
-    celery_broker_url: str | None = None
-    celery_result_backend: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "deepseek/deepseek-chat"
+    openrouter_site_url: str | None = None
+    openrouter_app_title: str | None = None
 
     max_upload_size_bytes: int = 10 * 1024 * 1024
-    job_poll_interval_seconds: int = 2
     local_mindmap_output_dir: str = "local_output/mindmaps"
 
     @property
@@ -40,22 +37,6 @@ class Settings(BaseSettings):
         if path.is_absolute():
             return path
         return (BASE_DIR / path).resolve()
-
-    @property
-    def effective_celery_broker_url(self) -> str:
-        if self.celery_broker_url:
-            return self.celery_broker_url
-        if self.redis_url:
-            return self.redis_url
-        return "redis://localhost:6379/0"
-
-    @property
-    def effective_celery_result_backend(self) -> str:
-        if self.celery_result_backend:
-            return self.celery_result_backend
-        if self.redis_url:
-            return self.redis_url
-        return "redis://localhost:6379/1"
 
 
 @lru_cache(maxsize=1)

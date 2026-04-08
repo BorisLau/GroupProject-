@@ -155,7 +155,7 @@ def normalize_mindmap_graph(raw_graph: dict | None) -> dict:
             "title": _safe_string((graph.get("meta") or {}).get("title"), "Untitled Mindmap"),
             "domain": _safe_string((graph.get("meta") or {}).get("domain"), "general"),
             "language": _safe_string((graph.get("meta") or {}).get("language"), "zh-TW"),
-            "generatedBy": _safe_string((graph.get("meta") or {}).get("generatedBy"), "deepseek"),
+            "generatedBy": _safe_string((graph.get("meta") or {}).get("generatedBy"), "openrouter"),
             "createdAt": datetime.now(timezone.utc).isoformat(),
         },
         "nodes": normalized_nodes,

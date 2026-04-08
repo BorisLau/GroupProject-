@@ -18,10 +18,10 @@ export default function UploadCenterPanel({
   isCheckingApiKey = false,
 }) {
   const apiKeyStatusText = isCheckingApiKey
-    ? "DeepSeek API Key 狀態檢查中..."
+    ? "OpenRouter API Key 狀態檢查中..."
     : hasApiKey
-      ? "DeepSeek API Key：已設定"
-      : "DeepSeek API Key：尚未設定";
+      ? "OpenRouter API Key：已設定"
+      : "OpenRouter API Key：尚未設定";
 
   return (
     <View style={styles.container}>
@@ -46,6 +46,10 @@ export default function UploadCenterPanel({
         <Text numberOfLines={1} style={styles.selectedFileLabel}>
           已選擇檔案：{selectedFileName}
         </Text>
+      ) : null}
+
+      {statusText ? (
+        <Text style={styles.statusLabel}>{statusText}</Text>
       ) : null}
     </View>
   );
@@ -113,5 +117,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
     textAlign: "center",
+    lineHeight: 18,
   },
 });

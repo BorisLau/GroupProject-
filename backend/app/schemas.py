@@ -1,7 +1,5 @@
-from typing import Literal, Optional
+from typing import Optional
 from pydantic import BaseModel, Field
-
-JobStatus = Literal["queued", "processing", "succeeded", "failed"]
 
 
 class SaveApiKeyRequest(BaseModel):
@@ -16,18 +14,9 @@ class ApiKeyStatusResponse(BaseModel):
     has_key: bool
 
 
-class CreateMindmapJobResponse(BaseModel):
-    job_id: str
-    status: JobStatus
-    local_json_path: Optional[str] = None
-    local_json_ready: bool = False
-
-
-class MindmapJobStatusResponse(BaseModel):
-    job_id: str
-    status: JobStatus
-    mindmap_id: Optional[str] = None
-    error: Optional[str] = None
+class GenerateMindmapResponse(BaseModel):
+    mindmap_id: str
+    graph_json: dict
     local_json_path: Optional[str] = None
     local_json_ready: bool = False
 

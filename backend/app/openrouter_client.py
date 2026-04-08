@@ -3,11 +3,11 @@ import requests
 from .config import get_settings
 
 
-class DeepSeekError(Exception):
+class OpenRouterError(Exception):
     pass
 
 
-class RetryableDeepSeekError(DeepSeekError):
+class RetryableOpenRouterError(OpenRouterError):
     pass
 
 
@@ -41,6 +41,40 @@ def _build_messages(document_text: str, title: str | None, max_nodes: int, langu
     ]
 
 
+def _build_headers(api_key: str) -> dict[str, str]:
+    settings = get_settings()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-Title": settings.openrouter_app_title or settings.app_name,
+    }
+
+    if settings.openrouter_site_url:
+        headers["HTTP-Referer"] = settings.openrouter_site_url
+
+    return headers
+
+
+def _extract_content(body: dict) -> str:
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        raise OpenRouterError("Unexpected OpenRouter response format") from exc
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+        if text_parts:
+            return "".join(text_parts)
+
+    raise OpenRouterError("OpenRouter returned unsupported message content")
+
+
 def generate_mindmap_json(
     *,
     api_key: str,
@@ -50,10 +84,10 @@ def generate_mindmap_json(
     language: str,
 ) -> dict:
     settings = get_settings()
-    endpoint = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
+    endpoint = f"{settings.openrouter_base_url.rstrip('/')}/chat/completions"
 
     payload = {
-        "model": settings.deepseek_model,
+        "model": settings.openrouter_model,
         "messages": _build_messages(document_text, title, max_nodes, language),
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
@@ -63,28 +97,29 @@ def generate_mindmap_json(
         response = requests.post(
             endpoint,
             json=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=_build_headers(api_key),
             timeout=90,
         )
     except requests.RequestException as exc:
-        raise RetryableDeepSeekError("DeepSeek request failed") from exc
+        raise RetryableOpenRouterError("OpenRouter request failed") from exc
 
     if response.status_code in {429, 500, 502, 503, 504}:
-        raise RetryableDeepSeekError(f"DeepSeek temporary error: {response.status_code}")
+        raise RetryableOpenRouterError(f"OpenRouter temporary error: {response.status_code}")
 
     if response.status_code >= 400:
-        raise DeepSeekError(f"DeepSeek request rejected: {response.status_code} {response.text[:200]}")
+        raise OpenRouterError(
+            f"OpenRouter request rejected: {response.status_code} {response.text[:300]}"
+        )
 
     try:
         body = response.json()
-        content = body["choices"][0]["message"]["content"]
+        content = _extract_content(body)
+    except OpenRouterError:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise DeepSeekError("Unexpected DeepSeek response format") from exc
+        raise OpenRouterError("Unexpected OpenRouter response format") from exc
 
     try:
         return json.loads(content)
     except json.JSONDecodeError as exc:
-        raise DeepSeekError("DeepSeek returned non-JSON content") from exc
+        raise OpenRouterError("OpenRouter returned non-JSON content") from exc

@@ -13,8 +13,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import {
-  getDeepSeekKeyStatus,
-  saveDeepSeekApiKey,
+  getBackendBaseUrl,
+  getOpenRouterKeyStatus,
+  saveOpenRouterApiKey,
 } from "../lib/backendApi";
 import {
   borderRadius,
@@ -43,9 +44,12 @@ export default function SettingsScreen() {
   const [profileMessage, setProfileMessage] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [hasOpenRouterKey, setHasOpenRouterKey] = useState(false);
+  const [apiKeyStatusMessage, setApiKeyStatusMessage] = useState("");
 
   const accessToken = useMemo(() => session?.access_token || "", [session]);
   const email = user?.email || "未登入";
+  const backendBaseUrl = useMemo(() => getBackendBaseUrl(), []);
 
   useEffect(() => {
     setDisplayName(getInitialDisplayName(user));
@@ -60,15 +64,23 @@ export default function SettingsScreen() {
       }
 
       try {
-        await getDeepSeekKeyStatus({ token: accessToken });
-      } catch (_error) {
+        const result = await getOpenRouterKeyStatus({ token: accessToken });
+        const hasKey = Boolean(result?.has_key);
+        setHasOpenRouterKey(hasKey);
+        setApiKeyStatusMessage(
+          hasKey
+            ? "後端連線正常，OpenRouter API Key 已設定。"
+            : "後端連線正常，但尚未設定 OpenRouter API Key。"
+        );
+      } catch (error) {
         if (cancelled) {
           return;
         }
-      } finally {
-        if (cancelled) {
-          return;
-        }
+        setHasOpenRouterKey(false);
+        setApiKeyStatusMessage(
+          error?.message ||
+            `無法連線到後端服務，請檢查：${backendBaseUrl}`
+        );
       }
     };
 
@@ -77,7 +89,7 @@ export default function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken]);
+  }, [accessToken, backendBaseUrl]);
 
   const handleSaveProfile = async () => {
     if (!session) {
@@ -120,9 +132,12 @@ export default function SettingsScreen() {
     setApiKeySaving(true);
 
     try {
-      await saveDeepSeekApiKey({ token: accessToken, apiKey: trimmedKey });
+      await saveOpenRouterApiKey({ token: accessToken, apiKey: trimmedKey });
       setApiKey("");
-    } catch (_error) {
+      setHasOpenRouterKey(true);
+      setApiKeyStatusMessage("OpenRouter API Key 已儲存。");
+    } catch (error) {
+      setApiKeyStatusMessage(error?.message || "儲存 API Key 失敗。");
       return;
     } finally {
       setApiKeySaving(false);
@@ -242,7 +257,17 @@ export default function SettingsScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>設置 API Key</Text>
 
-            <Text style={styles.label}>DeepSeek API Key</Text>
+            <Text style={styles.label}>OpenRouter API Key</Text>
+            <View style={styles.readonlyField}>
+              <Text style={styles.readonlyValue}>
+                後端：{backendBaseUrl}
+              </Text>
+            </View>
+            <View style={styles.readonlyField}>
+              <Text style={styles.readonlyValue}>
+                狀態：{hasOpenRouterKey ? "已設定" : "未設定"}
+              </Text>
+            </View>
             <TextInput
               value={apiKey}
               onChangeText={setApiKey}
@@ -264,6 +289,10 @@ export default function SettingsScreen() {
                 {apiKeySaving ? "儲存中..." : "儲存 API Key"}
               </Text>
             </TouchableOpacity>
+
+            {apiKeyStatusMessage ? (
+              <Text style={styles.messageText}>{apiKeyStatusMessage}</Text>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -391,5 +420,11 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textOnPrimary,
     fontWeight: "600",
+  },
+  messageText: {
+    marginTop: spacing.md,
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
 });

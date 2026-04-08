@@ -1,83 +1,118 @@
-# Mindmap AI Backend (FastAPI + Celery)
+# Mindmap AI Backend (FastAPI for Cloud Run)
 
-This backend accepts uploaded files, generates mindmap JSON with DeepSeek, and stores the result in Supabase.
+This backend accepts uploaded files, generates mindmap JSON through OpenRouter in a single request, and stores the result in Supabase.
 
 ## Stack
 - FastAPI API server
-- Celery worker + Redis queue
-- Supabase (Postgres)
-- DeepSeek Chat Completions API
+- Supabase (Auth + Postgres)
+- OpenRouter Chat Completions API
 
 ## Setup
-1. Create and activate Python venv
-2. Install deps
+1. Create and activate a Python virtual environment.
+2. Install dependencies.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Copy env template
+For local tests:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+3. Copy the env template.
 
 ```bash
 cp .env.example .env
 ```
 
-4. Fill `.env` values (`SUPABASE_*`, `APP_ENCRYPTION_KEY`, etc.)
+4. Fill `.env` values (`SUPABASE_*`, `APP_ENCRYPTION_KEY`, etc.).
 
 ## Run locally
-Start Redis first, then run API and worker in separate terminals:
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-```bash
-celery -A celery_worker.celery_app worker --loglevel=info
-```
+## Deploy to Cloud Run
+This backend is designed to run as a single Cloud Run service.
 
-## Deploy to Render
-This project can run on Render with:
-- 1 Web Service for FastAPI
-- 1 Background Worker for Celery
-- 1 Key Value instance for Redis-compatible queueing
+### Lowest-cost baseline
+- `min-instances=0` so idle cost stays at zero
+- `memory=512Mi` and `cpu=1` to keep request cost low
+- `concurrency=4` to avoid spinning up too many instances for light traffic
+- `max-instances=3` so bursts stay bounded
+- `timeout=300s` which is enough for typical uploads without paying for overly long requests
 
-The repo root includes [render.yaml](../render.yaml) for a Blueprint-based setup.
-
-### Render services
-- `ccit4080-backend`: FastAPI API server
-- `ccit4080-worker`: Celery worker
-- `ccit4080-redis`: Render Key Value instance
-
-### Required Render environment variables
-Set these during Blueprint creation when Render prompts for `sync: false` values:
+### Required environment variables
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `APP_ENCRYPTION_KEY`
 - `CORS_ORIGINS`
+- `OPENROUTER_BASE_URL`
+- `OPENROUTER_MODEL`
+- `MAX_UPLOAD_SIZE_BYTES`
+- `LOCAL_MINDMAP_OUTPUT_DIR`
 
-Notes:
-- `APP_ENCRYPTION_KEY` should be a Fernet key.
-- `REDIS_URL` is injected automatically from the Key Value service.
-- `LOCAL_MINDMAP_OUTPUT_DIR` is set to `/tmp/mindmaps` on Render because the filesystem is ephemeral.
+Recommended Cloud Run value:
+- `LOCAL_MINDMAP_OUTPUT_DIR=/tmp/mindmaps`
 
-### FastAPI start command on Render
+### Build and deploy
+1. Copy the example env file and fill in the non-secret values:
+
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
+cp backend/cloudrun.env.yaml.example backend/cloudrun.env.yaml
 ```
 
-### Celery worker start command on Render
+2. Export the secret values in your shell:
+
 ```bash
-celery -A celery_worker.celery_app worker --loglevel=info
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_ANON_KEY="..."
+export SUPABASE_SERVICE_ROLE_KEY="..."
+export APP_ENCRYPTION_KEY="..."
 ```
+
+3. Run the deploy script from the repo root:
+
+```bash
+chmod +x backend/scripts/deploy_cloud_run.sh
+PROJECT_ID=your-gcp-project SERVICE_NAME=ccit4080-backend REGION=asia-east1 \
+  backend/scripts/deploy_cloud_run.sh
+```
+
+4. Fetch the deployed service URL:
+
+```bash
+gcloud run services describe ccit4080-backend \
+  --region asia-east1 \
+  --format='value(status.url)'
+```
+
+5. Put that URL into the frontend `.env` as `EXPO_PUBLIC_BACKEND_URL`, then restart Expo:
+
+```bash
+npx expo start -c
+```
+
+### Service settings
+- Request timeout: start with `300` seconds.
+- Memory: start with `512 MiB`. Raise to `1 GiB` only if large PDFs/docx files fail.
+- CPU: `1`
+- Scaling: `min-instances=0`, `max-instances=3`
+- Billing: request-based with CPU throttling enabled
 
 ## API
+- `PUT /v1/settings/openrouter-key`
+- `GET /v1/settings/openrouter-key/status`
+- `POST /v1/mindmaps/generate` (multipart: `file`, optional `title`, `max_nodes`, `language`)
+- `GET /v1/mindmaps/{mindmap_id}`
+
+Legacy DeepSeek routes remain available as aliases:
 - `PUT /v1/settings/deepseek-key`
 - `GET /v1/settings/deepseek-key/status`
-- `POST /v1/mindmap/jobs` (multipart: `file`, optional `title`, `max_nodes`, `language`)
-- `GET /v1/mindmap/jobs/{job_id}`
-- `GET /v1/mindmap/jobs/{job_id}/local-json`
-- `GET /v1/mindmaps/{mindmap_id}`
 
 All `/v1/*` endpoints require `Authorization: Bearer <supabase_access_token>`.
 
@@ -85,4 +120,5 @@ All `/v1/*` endpoints require `Authorization: Bearer <supabase_access_token>`.
 - Supported file types in v1: TXT / MD / PDF / DOCX
 - Raw uploaded file is not persisted
 - Mindmap JSON is validated and normalized before storing
-- Normalized mindmap JSON is also written locally to `backend/local_output/mindmaps/<job_id>.json` by default
+- Normalized mindmap JSON is also written locally to `backend/local_output/mindmaps/<mindmap_id>.json` by default
+- The legacy `mindmap_jobs` table can remain in Supabase, but the current Cloud Run flow does not use it
