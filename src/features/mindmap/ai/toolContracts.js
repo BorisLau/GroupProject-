@@ -67,6 +67,10 @@ export const buildMindmapSystemPrompt = (request, policy = DEFAULT_MINDMAP_POLIC
     "你是 Mindmap Graph Planner。",
     "輸出必須是可機器解析 JSON，不得輸出 markdown。",
     "先產生清晰樹狀骨架，再補跨分支依賴。",
+    "若內容足夠，優先做三層分類：root 主題 -> 2 到 6 個中層分類 -> 具體細節節點。",
+    "語意相關的內容應盡量收斂到同一個中層分類下，不要讓 root 直接掛太多雜亂節點。",
+    "中層分類可使用 type=group；如果暫時不建立 group 節點，至少在節點上標記 group 名稱。",
+    "如果原始內容太短，不要硬湊三層，保持結構自然即可。",
     `語言: ${language}`,
     `節點上限: ${maxNodes}`,
     `深度上限: ${maxDepth}`,
@@ -89,4 +93,3 @@ export const buildMindmapToolBundle = (request, policy = DEFAULT_MINDMAP_POLICY)
     },
   };
 };
-

@@ -1,4 +1,4 @@
-import { getNodePortPosition } from "./canvasGraph";
+import { getBestConnectionPorts, getNodePortPosition } from "./canvasGraph";
 
 const EDGE_PADDING = 160;
 const MIN_CONTROL_DISTANCE = 44;
@@ -57,8 +57,9 @@ export const buildEdgeSegment = (edge, fromNode, toNode) => {
     return null;
   }
 
-  const fromPort = edge.fromPort || "right";
-  const toPort = edge.toPort || "left";
+  const bestPorts = getBestConnectionPorts(fromNode, toNode);
+  const fromPort = bestPorts.fromPort;
+  const toPort = bestPorts.toPort;
   const fromPoint = getNodePortPosition(fromNode, fromPort);
   const toPoint = getNodePortPosition(toNode, toPort);
   const controlPoint1 = getControlPoint(fromPoint, toPoint, fromPort);

@@ -106,6 +106,8 @@ export const getOppositePort = (side) => {
 };
 
 export const getPortVector = (side) => {
+  "worklet";
+
   switch (side) {
     case "left":
       return { x: -1, y: 0 };
@@ -141,6 +143,8 @@ export const getNodePortPosition = (node, port = "right") => {
 };
 
 const getConnectionScore = (fromPoint, toPoint, fromPort, toPort) => {
+  "worklet";
+
   const dx = toPoint.x - fromPoint.x;
   const dy = toPoint.y - fromPoint.y;
   const distance = Math.hypot(dx, dy);
@@ -178,6 +182,8 @@ const getConnectionScore = (fromPoint, toPoint, fromPort, toPort) => {
 };
 
 export const getBestConnectionPorts = (fromNode, toNode) => {
+  "worklet";
+
   let bestCandidate = null;
 
   PORT_SIDES.forEach((fromPort) => {

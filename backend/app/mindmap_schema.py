@@ -61,6 +61,26 @@ def _dedupe_by_id(records: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+def _slugify_label(value: str) -> str:
+    lowered = value.strip().lower()
+    chars = [char if char.isalnum() else "-" for char in lowered]
+    slug = "".join(chars).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "group"
+
+
+def _make_unique_node_id(existing_ids: set[str], label: str) -> str:
+    base = f"group-{_slugify_label(label)}"
+    candidate = base
+    suffix = 2
+    while candidate in existing_ids:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    existing_ids.add(candidate)
+    return candidate
+
+
 def _create_node(raw_node: dict, index: int, parent_id: str | None = None) -> dict:
     return {
         "id": _normalize_id(raw_node.get("id"), "node", index + 1),
@@ -163,6 +183,121 @@ def normalize_mindmap_graph(raw_graph: dict | None) -> dict:
     }
 
 
+def _materialize_group_layer(graph: dict) -> dict:
+    nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    if not nodes:
+        return graph
+
+    root_node = next((node for node in nodes if node.get("type") == "root"), nodes[0])
+    root_id = root_node.get("id")
+    if not root_id:
+        return graph
+
+    node_map = {node["id"]: node for node in nodes if node.get("id")}
+    parent_map: dict[str, str] = {}
+
+    for node in nodes:
+        node_id = _safe_string(node.get("id"))
+        parent_id = _safe_string(node.get("parentId"))
+        if node_id and parent_id and node_id != root_id:
+            parent_map[node_id] = parent_id
+
+    for edge in graph.get("edges", []):
+        if _normalize_relation(edge.get("relation")) != "parent":
+            continue
+        child_id = _safe_string(edge.get("to"))
+        parent_id = _safe_string(edge.get("from"))
+        if child_id and parent_id and child_id != root_id:
+            parent_map[child_id] = parent_id
+
+    existing_ids = set(node_map.keys())
+    existing_group_ids_by_label: dict[str, str] = {}
+    for node in nodes:
+        if node.get("type") != "group":
+            continue
+        if parent_map.get(node.get("id")) != root_id and node.get("parentId") != root_id:
+            continue
+        label = _safe_string(node.get("label"))
+        if label:
+            existing_group_ids_by_label[label.casefold()] = node["id"]
+
+    grouped_members: dict[str, list[str]] = {}
+    for node in nodes:
+        node_id = _safe_string(node.get("id"))
+        if not node_id or node_id == root_id or node.get("type") == "group":
+            continue
+        if parent_map.get(node_id) != root_id:
+            continue
+        group_label = _safe_string(node.get("group"))
+        if not group_label:
+            continue
+        grouped_members.setdefault(group_label, []).append(node_id)
+
+    next_nodes = list(nodes)
+    changed = False
+    for group_label, member_ids in grouped_members.items():
+        normalized_label = group_label.casefold()
+        group_id = existing_group_ids_by_label.get(normalized_label)
+
+        if group_id is None and len(member_ids) < 2:
+            continue
+
+        if group_id is None:
+            group_id = _make_unique_node_id(existing_ids, group_label)
+            next_group_node = {
+                "id": group_id,
+                "label": group_label,
+                "description": "",
+                "type": "group",
+                "parentId": root_id,
+                "tags": [],
+                "priority": "medium",
+                "group": "",
+                "collapsed": False,
+            }
+            next_nodes.append(next_group_node)
+            node_map[group_id] = next_group_node
+            parent_map[group_id] = root_id
+            existing_group_ids_by_label[normalized_label] = group_id
+            changed = True
+
+        for member_id in member_ids:
+            if parent_map.get(member_id) != group_id:
+                parent_map[member_id] = group_id
+                changed = True
+
+    if not changed:
+        return graph
+
+    for node in next_nodes:
+        node_id = _safe_string(node.get("id"))
+        if node_id == root_id:
+            node["parentId"] = None
+            continue
+        node["parentId"] = parent_map.get(node_id)
+
+    non_parent_edges = [
+        edge for edge in graph.get("edges", []) if _normalize_relation(edge.get("relation")) != "parent"
+    ]
+    rebuilt_parent_edges = [
+        {
+            "id": f"edge-parent-{parent_id}-{child_id}",
+            "from": parent_id,
+            "to": child_id,
+            "relation": "parent",
+            "label": "",
+        }
+        for child_id, parent_id in parent_map.items()
+        if child_id in node_map and parent_id in node_map
+    ]
+
+    return {
+        **graph,
+        "nodes": next_nodes,
+        "edges": _dedupe_by_id([*rebuilt_parent_edges, *non_parent_edges]),
+    }
+
+
 def validate_mindmap_graph(graph: dict) -> tuple[bool, list[str]]:
     errors: list[str] = []
 
@@ -211,6 +346,7 @@ def finalize_generated_mindmap(
     language: str = "zh-TW",
 ) -> dict:
     graph = normalize_mindmap_graph(raw_graph)
+    graph = _materialize_group_layer(graph)
 
     if len(graph["nodes"]) > max_nodes:
         kept_ids = {node["id"] for node in graph["nodes"][:max_nodes]}

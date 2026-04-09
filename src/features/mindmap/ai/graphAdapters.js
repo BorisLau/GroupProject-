@@ -1,11 +1,5 @@
 import { normalizeNodeType, normalizeRelationType } from "./classification";
-
-const pickPorts = (fromNode, toNode) => {
-  if ((toNode?.x || 0) >= (fromNode?.x || 0)) {
-    return { fromPort: "right", toPort: "left" };
-  }
-  return { fromPort: "left", toPort: "right" };
-};
+import { getBestConnectionPorts } from "../canvasGraph";
 
 export const toCanvasGraph = (graph) => {
   const nodeMap = new Map();
@@ -40,7 +34,7 @@ export const toCanvasGraph = (graph) => {
       if (!fromNode || !toNode) {
         return null;
       }
-      const ports = pickPorts(fromNode, toNode);
+      const ports = getBestConnectionPorts(fromNode, toNode);
       return {
         id: edge.id || `edge-${index + 1}`,
         from: edge.from,
@@ -93,4 +87,3 @@ export const fromCanvasGraph = (canvasGraph) => {
     edges,
   };
 };
-

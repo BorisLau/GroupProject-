@@ -55,6 +55,9 @@ def test_generate_mindmap_json_calls_openrouter(monkeypatch):
 
     assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["json"]["model"] == "deepseek/deepseek-chat"
+    assert "three-level hierarchy" in captured["json"]["messages"][0]["content"]
+    assert "\"group\":string?" in captured["json"]["messages"][0]["content"]
+    assert "prefer three layers of classification" in captured["json"]["messages"][1]["content"]
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["headers"]["HTTP-Referer"] == "https://example.com/app"
     assert captured["headers"]["X-Title"] == "Smart Map"
