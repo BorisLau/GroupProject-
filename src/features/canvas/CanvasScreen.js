@@ -27,8 +27,8 @@ import useConversations from "../../../hooks/useConversations";
 import useCanvasGraph from "../mindmap/useCanvasGraph";
 import { borderRadius, colors, spacing, typography } from "../../../styles/theme";
 
-const MIN_SCALE = 0.6;
-const MAX_SCALE = 6;
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 10;
 const DOT_STEP = 24;
 const DOT_RADIUS = 1.6;
 const DOT_PERCENT = (DOT_RADIUS / DOT_STEP) * 100;
@@ -40,6 +40,7 @@ const CONNECTION_DOUBLE_TAP_DELAY_MS = 320;
 const CONTEXT_MENU_WIDTH = 140;
 const CONTEXT_MENU_HEIGHT = 52;
 const CONTEXT_MENU_MARGIN = 12;
+const FIT_VIEW_PADDING = 48;
 const DEVICE_PIXEL_RATIO = PixelRatio.get() || 1;
 
 const clamp = (value, min, max) => {
@@ -231,6 +232,66 @@ export default function CanvasScreen() {
     translateX.value = withTiming(center.x, { duration: 180 });
     translateY.value = withTiming(center.y, { duration: 180 });
   }, [getViewportCenter, scale, translateX, translateY]);
+
+  const handleFitAllNodes = useCallback(() => {
+    setWebDeleteMenu(null);
+
+    if (viewport.width <= 0 || viewport.height <= 0) {
+      return;
+    }
+
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      handleReset();
+      return;
+    }
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    nodes.forEach((node) => {
+      const nodeX = Number.isFinite(node?.x) ? node.x : 0;
+      const nodeY = Number.isFinite(node?.y) ? node.y : 0;
+      const nodeWidth = Number.isFinite(node?.width) ? node.width : 220;
+      const nodeHeight = Number.isFinite(node?.height) ? node.height : 96;
+
+      minX = Math.min(minX, nodeX);
+      minY = Math.min(minY, nodeY);
+      maxX = Math.max(maxX, nodeX + nodeWidth);
+      maxY = Math.max(maxY, nodeY + nodeHeight);
+    });
+
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY)
+    ) {
+      handleReset();
+      return;
+    }
+
+    const contentWidth = Math.max(1, maxX - minX);
+    const contentHeight = Math.max(1, maxY - minY);
+    const availableWidth = Math.max(1, viewport.width - FIT_VIEW_PADDING * 2);
+    const availableHeight = Math.max(1, viewport.height - FIT_VIEW_PADDING * 2);
+    const nextScale = clamp(
+      Math.min(availableWidth / contentWidth, availableHeight / contentHeight),
+      MIN_SCALE,
+      MAX_SCALE
+    );
+    const scaledWidth = contentWidth * nextScale;
+    const scaledHeight = contentHeight * nextScale;
+    const nextTranslateX =
+      FIT_VIEW_PADDING + (availableWidth - scaledWidth) / 2 - minX * nextScale;
+    const nextTranslateY =
+      FIT_VIEW_PADDING + (availableHeight - scaledHeight) / 2 - minY * nextScale;
+
+    scale.value = withTiming(nextScale, { duration: 220 });
+    translateX.value = withTiming(nextTranslateX, { duration: 220 });
+    translateY.value = withTiming(nextTranslateY, { duration: 220 });
+  }, [handleReset, nodes, scale, translateX, translateY, viewport.height, viewport.width]);
 
   const handleDemoNodeTextCommit = useCallback((nodeId, nextText) => {
     updateNodeText(nodeId, nextText);
@@ -653,6 +714,7 @@ export default function CanvasScreen() {
             onToggleExpanded={() => setIsToolMenuExpanded((prev) => !prev)}
             onToggleDragMode={handleToggleDragMode}
             onAddNode={handleAddNode}
+            onFitToScreen={handleFitAllNodes}
             onToggleConnectionPoints={handleToggleConnectionMode}
           />
         </View>

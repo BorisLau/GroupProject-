@@ -67,6 +67,7 @@ export default function CanvasToolMenu({
   onToggleExpanded,
   onToggleDragMode,
   onAddNode,
+  onFitToScreen,
   onToggleConnectionPoints,
 }) {
   const expansion = useSharedValue(expanded ? 1 : 0);
@@ -100,6 +101,12 @@ export default function CanvasToolMenu({
           flashOnPress
           onPress={onAddNode}
           accessibilityLabel="新增節點"
+        />
+        <ToolButton
+          icon="scan-outline"
+          flashOnPress
+          onPress={onFitToScreen}
+          accessibilityLabel="縮放顯示全部節點"
         />
         <ToolButton
           icon="git-network-outline"
